@@ -1,0 +1,30 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Downloaded / precomputed data, never checked in
+checkpoints/
+cache/
+outputs/
+multirun/
+wandb/
+*.pt
+*.pth
+*.dat
+*.memmap
+
+# Editors
+.vscode/
+.idea/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+

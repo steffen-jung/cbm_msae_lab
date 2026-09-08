@@ -1,0 +1,23 @@
+# Top-level Hydra config. Compose/override any group from the CLI, e.g.:
+#   uv run scripts/train.py encoder=dinov3 projection.kernel_size=1 upsampler=anyup \
+#       upsampler.target_resolution=64 sae.activation=sigmoid
+defaults:
+  - encoder: clip_dinoiser
+  - projection: k3
+  - upsampler: none
+  - sae: matryoshka_batch_topk
+  - loss: default
+  - dataset: cub
+  - train: default
+  - _self_
+
+seed: 0
+
+# Keep the working directory as wherever you invoked `scripts/train.py` from,
+# instead of Hydra's default of `cd`-ing into a new outputs/<date>/<time>/ dir --
+# otherwise every relative path in this config (checkpoints/, cache/, dataset
+# roots) would silently resolve against the wrong directory.
+hydra:
+  job:
+    chdir: false
+

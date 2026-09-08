@@ -1,0 +1,21 @@
+batch_size: 64
+num_workers: 4
+epochs: 50
+device: cuda
+checkpoint_dir: outputs/checkpoints
+checkpoint_every_n_epochs: 5
+log_every_n_steps: 50
+
+cache:
+  mode: live  # "live" | "cache" | "extract_and_cache"
+  dir: cache
+
+eval:
+  every_n_epochs: 5
+  enable_expensive_metrics: false  # Monosemanticity/Tversky-MS need a full validation pass
+  max_eval_samples: 2000
+
+wandb:
+  project: cbm-msae-lab
+  mode: online  # "online" | "offline" | "disabled"
+  run_name: null

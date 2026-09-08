@@ -1,0 +1,4 @@
+# Cheap, non-learned upsampling baseline (no image guidance). Compare against `anyup`.
+_target_: cbm_msae_lab.upsampling.bilinear.BilinearUpsampler
+target_resolution: 64
+stage: features  # "features" (before the SAE) or "latents" (after SAE.encode, for visualization only)

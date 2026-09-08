@@ -1,0 +1,2 @@
+# No upsampling: the SAE operates at the encoder's native patch-grid resolution.
+_target_: cbm_msae_lab.upsampling.identity.IdentityUpsampler

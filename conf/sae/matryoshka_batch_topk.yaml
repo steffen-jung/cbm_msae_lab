@@ -1,0 +1,14 @@
+# Matches CFM's released checkpoint hyperparameters (k=12, expansion factor 16 ->
+# dict_size = 512*16 = 8192, matryoshka group fractions [0.008, 0.03, 0.06, 0.12, 0.24, 0.542]).
+activation_dim: ${projection.out_channels}
+dict_size: 8192
+k: 12
+group_fractions: [0.008, 0.03, 0.06, 0.12, 0.24, 0.542]
+activation: relu  # "relu" | "sigmoid"
+lr: null  # null -> dictionary_learning's 1/sqrt(dict_size) auto-scaling
+steps: 100000
+warmup_steps: 1000
+decay_start: null
+threshold_beta: 0.999
+threshold_start_step: 1000
+seed: 0

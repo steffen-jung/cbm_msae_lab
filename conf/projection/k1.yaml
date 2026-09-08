@@ -1,0 +1,5 @@
+# 1x1 kernel: mathematically identical to a per-token nn.Linear (no spatial mixing).
+_target_: cbm_msae_lab.projection.EncoderProjection
+in_channels: ${encoder.output_dim}
+out_channels: 512
+kernel_size: 1

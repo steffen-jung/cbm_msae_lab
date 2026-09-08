@@ -1,0 +1,10 @@
+# Image-guided universal feature upsampler (Wimmer et al., 2025). See
+# src/cbm_msae_lab/upsampling/anyup.py. `stage: features` upsamples before the SAE
+# (the SAE then trains at this resolution); `stage: latents` only upsamples the
+# already-encoded concept maps afterward, for visualization.
+_target_: cbm_msae_lab.upsampling.anyup.AnyUpUpsampler
+target_resolution: 64
+stage: features
+torch_hub_repo: wimmerth/anyup
+torch_hub_model: anyup_multi_backbone
+use_natten: false

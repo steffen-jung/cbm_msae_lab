@@ -1,0 +1,14 @@
+# Ported from CFM's cfm/clip_dinoiser_backbone/configs/maskclip.yaml.
+# Frozen CLIP ViT-B/16 (open_clip, laion2b_s34b_b88k weights) + MaskCLIP dense head.
+model:
+  _target_: cbm_msae_lab.encoders.clip_dinoiser_backend.maskclip.MaskClip
+  clip_model: "ViT-B-16"
+  backbone:
+    img_size: 224
+    patch_size: 16
+  decode_head:
+    type: MaskClipHead
+    in_channels: 768
+    text_channels: 512
+    use_templates: True
+    pretrained: laion2b_s34b_b88k

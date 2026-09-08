@@ -1,0 +1,5 @@
+_target_: cbm_msae_lab.data.cub.CUBDataset
+root: /ceph/faroesch/datasets/CUB_200_2011
+image_size: 224
+val_fraction: 0.1
+seed: 0

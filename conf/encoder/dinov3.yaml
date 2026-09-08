@@ -1,0 +1,9 @@
+# DINOv3, loaded via timm (auto-downloads from HuggingFace, no gated access needed).
+# Other options: vit_small_patch16_dinov3.lvd1689m (output_dim=384),
+# vit_large_patch16_dinov3.lvd1689m (output_dim=1024).
+_target_: cbm_msae_lab.encoders.dinov3.DINOv3Encoder
+model_name: vit_base_patch16_dinov3.lvd1689m
+output_dim: 768
+image_size: 224
+patch_size: 16
+extract_attention: false  # set true to also get EncoderOutput.attention (needed for loss.*.grouping=attention)

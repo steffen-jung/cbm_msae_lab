@@ -1,0 +1,13 @@
+# "DINOised CLIP" -- see src/cbm_msae_lab/encoders/clip_dinoiser.py.
+_target_: cbm_msae_lab.encoders.clip_dinoiser.ClipDinoiserEncoder
+checkpoint_path: checkpoints/clip_dinoiser/laion2b.pt
+clip_backbone: maskclip
+vit_arch: vit_base
+vit_patch_size: 16
+feats_idx: -3
+enc_type_feats: v
+gamma: 0.2
+delta: 0.99
+output_dim: 512
+image_size: 224
+extract_attention: false  # set true to also get EncoderOutput.attention (needed for loss.*.grouping=attention)

@@ -1,0 +1,14 @@
+# Ported from CFM's cfm/clip_dinoiser_backbone/configs/clip_dinoiser.yaml.
+# Matches the shipped checkpoint at checkpoints/clip_dinoiser/laion2b.pt exactly --
+# changing these values would make that checkpoint's obj_proj/bkg_decoder weights
+# (trained for this exact configuration) load incorrectly.
+model:
+  _target_: cbm_msae_lab.encoders.clip_dinoiser_backend.clip_dinoiser.CLIP_DINOiser
+  clip_backbone: maskclip
+  vit_arch: vit_base
+  vit_patch_size: 16
+  enc_type_feats: "v"
+  gamma: 0.2
+  in_dim: 256
+  delta: 0.99
+  feats_idx: -3

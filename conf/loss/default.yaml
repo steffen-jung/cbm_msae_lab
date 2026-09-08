@@ -1,0 +1,31 @@
+# Every loss is always constructed; a weight of 0.0 disables it and skips its
+# compute() call entirely (see ComposableLossTrainer.loss()). Mix and match freely,
+# e.g. to reproduce CFM exactly: only reconstruction + auxk nonzero (the default below).
+reconstruction:
+  weight: 1.0
+
+auxk:
+  weight: 0.03125  # CFM's default auxk_alpha = 1/32
+
+scale_spatial:
+  weight: 0.0  # set > 0 to enable the user's scale/spatial loss
+  scales: [1, 2, 7, 14]
+  scale_weights: null  # null -> uniform 1/len(scales)
+  alpha: 1.0
+  b_min: 1
+
+group_sparsity:
+  weight: 0.0  # S2AE group sparsity loss (arXiv:2607.08605, Eq. 9)
+  grouping: tile  # "tile" (fixed grid, default) | "attention" (S2AE-style clustering, needs a group-label cache)
+  tile_size: 2
+
+exclusivity:
+  weight: 0.0  # S2AE exclusive sparsity loss (arXiv:2607.08605, Eq. 10)
+  grouping: tile  # "tile" | "attention"
+  tile_size: 2
+
+# Only used when group_sparsity.grouping or exclusivity.grouping is "attention".
+# Defaults match S2AE's own repo (github.com/liaoweiduo/s2ae).
+attention_grouping:
+  n_clusters: 20
+  spatial_coeff: 0.02
