@@ -66,6 +66,9 @@ class ProbeConfig:
     standardize: bool = False
     lambda_grid: tuple[float, ...] = field(default_factory=lambda: (0.0, 0.1, 1.0))
     lr_grid: tuple[float, ...] = field(default_factory=lambda: (1e-4, 1e-3, 1e-2))
+    early_stopping_patience: int = 20
+    """Stop once val top-1 hasn't improved for this many consecutive val checks
+    (checks happen every `eval_every` epochs, see `fit_head`), not epochs."""
 
 
 @dataclass(frozen=True)
@@ -174,6 +177,7 @@ def fit_head(data: SplitTensors, cfg: ProbeConfig, lam: float, seed: int) -> tup
     best_val = -1.0
     best_state: dict[str, Tensor] = {}
     best_epoch = -1
+    num_bad_checks = 0
     eval_every = max(1, cfg.epochs // 200)  # cap how often we pay for a val pass
 
     for epoch in range(cfg.epochs):
@@ -195,6 +199,11 @@ def fit_head(data: SplitTensors, cfg: ProbeConfig, lam: float, seed: int) -> tup
                 best_val = va
                 best_state = {k: v.detach().clone() for k, v in head.state_dict().items()}
                 best_epoch = epoch
+                num_bad_checks = 0
+            else:
+                num_bad_checks += 1
+                if num_bad_checks >= cfg.early_stopping_patience:
+                    break
 
     head.load_state_dict(best_state)
     return head, best_val, best_epoch
