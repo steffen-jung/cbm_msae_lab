@@ -2,6 +2,9 @@
 # src/cbm_msae_lab/upsampling/anyup.py. `stage: features` upsamples before the SAE
 # (the SAE then trains at this resolution); `stage: latents` only upsamples the
 # already-encoded concept maps afterward, for visualization.
+defaults:
+  - base_anyup
+
 _target_: cbm_msae_lab.upsampling.anyup.AnyUpUpsampler
 target_resolution: 64
 stage: features

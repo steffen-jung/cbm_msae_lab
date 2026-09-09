@@ -1,3 +1,6 @@
+defaults:
+  - base_default
+
 batch_size: 64
 num_workers: 4
 epochs: 50
@@ -7,7 +10,7 @@ checkpoint_every_n_epochs: 5
 log_every_n_steps: 50
 
 cache:
-  mode: live  # "live" | "cache" | "extract_and_cache"
+  mode: live  # "live" | "cache_encoder"
   dir: cache
 
 eval:

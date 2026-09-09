@@ -1,5 +1,8 @@
 # Matches CFM's released checkpoint hyperparameters (k=12, expansion factor 16 ->
 # dict_size = 512*16 = 8192, matryoshka group fractions [0.008, 0.03, 0.06, 0.12, 0.24, 0.542]).
+defaults:
+  - base_matryoshka_batch_topk
+
 activation_dim: ${projection.out_channels}
 dict_size: 8192
 k: 12

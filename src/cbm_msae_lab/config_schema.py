@@ -323,24 +323,34 @@ def register_configs() -> None:
 
     Must run (import this module) before ``@hydra.main`` composes the config,
     so that e.g. ``encoder=dinov3`` on the CLI resolves to `DINOv3EncoderConfig`.
+
+    Every schema is stored under a ``base_``-prefixed name, deliberately
+    *not* matching its corresponding ``conf/**/*.yaml`` file's own name (e.g.
+    ``base_clip_dinoiser`` vs. ``conf/encoder/clip_dinoiser.yaml``): each YAML
+    file instead pulls its schema in explicitly via its own ``defaults:``
+    list (``- base_clip_dinoiser``). Relying on same-name auto-matching
+    instead is deprecated as of Hydra 1.1 (see
+    https://hydra.cc/docs/1.2/upgrades/1.0_to_1.1/automatic_schema_matching);
+    this is that migration's recommended fix, "Option 1: rename the
+    structured config."
     """
     cs = ConfigStore.instance()
-    cs.store(name="config", node=Config)
+    cs.store(name="base_config", node=Config)
 
-    cs.store(group="encoder", name="clip_dinoiser", node=ClipDinoiserEncoderConfig)
-    cs.store(group="encoder", name="dinov3", node=DINOv3EncoderConfig)
+    cs.store(group="encoder", name="base_clip_dinoiser", node=ClipDinoiserEncoderConfig)
+    cs.store(group="encoder", name="base_dinov3", node=DINOv3EncoderConfig)
 
-    cs.store(group="projection", name="k1", node=ProjectionConfig(kernel_size=1))
-    cs.store(group="projection", name="k3", node=ProjectionConfig(kernel_size=3))
+    cs.store(group="projection", name="base_k1", node=ProjectionConfig(kernel_size=1))
+    cs.store(group="projection", name="base_k3", node=ProjectionConfig(kernel_size=3))
 
-    cs.store(group="upsampler", name="none", node=IdentityUpsamplerConfig)
-    cs.store(group="upsampler", name="bilinear", node=BilinearUpsamplerConfig)
-    cs.store(group="upsampler", name="anyup", node=AnyUpUpsamplerConfig)
+    cs.store(group="upsampler", name="base_none", node=IdentityUpsamplerConfig)
+    cs.store(group="upsampler", name="base_bilinear", node=BilinearUpsamplerConfig)
+    cs.store(group="upsampler", name="base_anyup", node=AnyUpUpsamplerConfig)
 
-    cs.store(group="sae", name="matryoshka_batch_topk", node=SAEConfig)
+    cs.store(group="sae", name="base_matryoshka_batch_topk", node=SAEConfig)
 
-    cs.store(group="loss", name="default", node=LossConfig)
+    cs.store(group="loss", name="base_default", node=LossConfig)
 
-    cs.store(group="dataset", name="cub", node=CUBDatasetConfig)
+    cs.store(group="dataset", name="base_cub", node=CUBDatasetConfig)
 
-    cs.store(group="train", name="default", node=TrainConfig)
+    cs.store(group="train", name="base_default", node=TrainConfig)

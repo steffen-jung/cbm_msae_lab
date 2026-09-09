@@ -1,6 +1,9 @@
 # Every loss is always constructed; a weight of 0.0 disables it and skips its
 # compute() call entirely (see ComposableLossTrainer.loss()). Mix and match freely,
 # e.g. to reproduce CFM exactly: only reconstruction + auxk nonzero (the default below).
+defaults:
+  - base_default
+
 reconstruction:
   weight: 1.0
 

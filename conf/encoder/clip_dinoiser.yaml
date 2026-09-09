@@ -1,4 +1,7 @@
 # "DINOised CLIP" -- see src/cbm_msae_lab/encoders/clip_dinoiser.py.
+defaults:
+  - base_clip_dinoiser
+
 _target_: cbm_msae_lab.encoders.clip_dinoiser.ClipDinoiserEncoder
 checkpoint_path: checkpoints/clip_dinoiser/laion2b.pt
 clip_backbone: maskclip

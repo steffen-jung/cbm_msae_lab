@@ -2,6 +2,7 @@
 #   uv run scripts/train.py encoder=dinov3 projection.kernel_size=1 upsampler=anyup \
 #       upsampler.target_resolution=64 sae.activation=sigmoid
 defaults:
+  - base_config
   - encoder: clip_dinoiser
   - projection: k3
   - upsampler: none
