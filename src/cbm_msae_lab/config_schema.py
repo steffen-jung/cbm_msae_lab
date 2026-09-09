@@ -247,11 +247,14 @@ class CUBDatasetConfig:
 
 @dataclass
 class CacheConfig:
-    """See caching.py. `mode="live"` never touches disk; `"cache"` requires a
-    pre-existing cache and fails loudly if it's missing; `"extract_and_cache"`
-    builds the cache on first use and reuses it after."""
+    """See caching.py. `mode="live"` never touches disk (encoder + projection
+    both run live every step). `"cache_encoder"` caches only the frozen
+    encoder's raw output (scripts/extract_raw_features.py, built once, fails
+    loudly if missing) and still runs the trainable projection live, with
+    gradients, every step -- the projection trains normally, just without
+    paying for the encoder forward pass every epoch."""
 
-    mode: str = "live"  # "live" | "cache" | "extract_and_cache"
+    mode: str = "live"  # "live" | "cache_encoder"
     dir: str = "cache"
 
 

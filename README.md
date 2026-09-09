@@ -38,10 +38,12 @@ uv run scripts/train.py encoder=dinov3 sae.activation=sigmoid loss.scale_spatial
 # Upsample features to 64x64 with AnyUp before the SAE ever sees them:
 uv run scripts/train.py upsampler=anyup upsampler.target_resolution=64
 
-# Pre-build an activation cache once, then train many SAE variants against it
-# without re-running the encoder every time:
-uv run scripts/extract_features.py
-uv run scripts/train.py train.cache.mode=cache
+# Pre-build a cache of the frozen encoder's raw output once, then skip the
+# expensive encoder forward every epoch. The projection still trains live,
+# with gradients, on top of the cache:
+uv run scripts/extract_raw_features.py --split train
+uv run scripts/extract_raw_features.py --split val
+uv run scripts/train.py train.cache.mode=cache_encoder
 ```
 
 Example: comparing CFM's own reconstruction loss against the scale/spatial

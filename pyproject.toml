@@ -28,6 +28,8 @@ build-backend = "uv_build"
 dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.6",
+    "jupyter>=1.1.1",
+    "matplotlib>=3.10.0",
 ]
 
 [tool.ruff]

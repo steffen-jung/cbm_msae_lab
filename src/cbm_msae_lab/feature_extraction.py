@@ -1,9 +1,9 @@
-"""Runs a dataset once through `ConceptPipeline.project` and writes the result
+"""Runs a dataset once through the frozen encoder and writes its raw output
 to an on-disk activation cache (see `caching.py`).
 
-Shared by `scripts/extract_features.py` (an explicit, standalone pre-caching
-step) and `activation_loader.py` (which calls this automatically the first
-time `train.cache.mode="extract_and_cache"` finds no existing cache).
+Shared by `scripts/extract_raw_features.py` (an explicit, standalone
+pre-caching step) and, in principle, anything else that wants the same cache
+built without going through the CLI.
 """
 
 from __future__ import annotations
@@ -14,12 +14,12 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 from cbm_msae_lab.caching import MemmapActivationWriter
-from cbm_msae_lab.pipeline import ConceptPipeline
+from cbm_msae_lab.encoders.base import Encoder
 
 
 @torch.no_grad()
-def build_activation_cache(
-    pipeline: ConceptPipeline,
+def build_raw_activation_cache(
+    encoder: Encoder,
     dataset: Dataset,
     cache_dir: str,
     cache_key: str,
@@ -28,13 +28,18 @@ def build_activation_cache(
     device: str,
     resolved_config: dict[str, Any],
 ) -> None:
-    pipeline.eval()
+    """No `EncoderProjection` involved, so this cache is reusable regardless of
+    projection kernel size/weights (see `caching.py::compute_raw_cache_key`).
+    Pairs with `activation_loader.py`'s `mode="cache_encoder"`, which runs the
+    (trainable) projection live, with gradients, on top of what's cached here.
+    """
+    encoder.eval()
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
     writer: MemmapActivationWriter | None = None
     for images, labels, _idx in loader:
         images = images.to(device)
-        features = pipeline.project(images)  # [b, C_sae, H, W]
+        features = encoder(images).features  # [b, C_backbone, H0, W0]
 
         if writer is None:
             _, C, H, W = features.shape

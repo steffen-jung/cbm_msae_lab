@@ -3,10 +3,12 @@
 Two entry points, matching how this module is used in two different places:
 
 ``extract_features(images)`` runs only the encoder/projection/upsampler part,
-producing the ``[B, P, activation_dim]`` tensor that both the training loop
-(``scripts/train.py``, feeding it to ``ComposableLossTrainer.loss``) and the
-caching script (``scripts/extract_features.py``) need. It is the only part of
-the pipeline that ever needs a gradient (through ``projection``'s Conv2d
+producing the ``[B, P, activation_dim]`` tensor ``scripts/train.py`` feeds to
+``ComposableLossTrainer.loss`` (in ``train.cache.mode="live"``; the
+``"cache_encoder"`` mode instead skips straight to just ``projection``, since
+``activation_loader.py`` already has the encoder's output from
+``scripts/extract_raw_features.py``'s cache). It is the only part of the
+pipeline that ever needs a gradient (through ``projection``'s Conv2d
 weights) -- everything else here is frozen.
 
 ``forward(images)`` runs the full pipeline including the SAE, for inference /

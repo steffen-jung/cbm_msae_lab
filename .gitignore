@@ -10,9 +10,11 @@ wheels/
 .venv
 
 # Downloaded / precomputed data, never checked in
-checkpoints/
-cache/
-outputs/
+# (no trailing slash: these are symlinks to /ceph, and a trailing-slash
+# pattern only matches real directories, not symlinks -- see `ls -la`)
+checkpoints
+cache
+outputs
 multirun/
 wandb/
 *.pt

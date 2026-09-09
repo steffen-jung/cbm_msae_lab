@@ -1,14 +1,13 @@
-"""Precomputed, memory-mapped activations -- so the (frozen, expensive) encoder
-forward pass is run once, not once per training run.
+"""Precomputed, memory-mapped raw encoder features -- so the (frozen,
+expensive) encoder forward pass is run once, not once per training run.
 
-The frozen encoder never changes for a fixed encoder+projection+upsampler
-configuration, so many different SAE/loss experiments can share one cache.
-`compute_cache_key` hashes exactly the config fields that affect the *values*
-stored in the cache (encoder choice+settings, the projection's own weights --
-since it's trainable, its weights matter, not just its architecture --
-whether/how features are upsampled, and the dataset/split/resolution); two
-runs whose SAE or loss config differs but whose cache key matches will reuse
-the same cache file, which is the entire point of caching here.
+The frozen encoder's output never changes for a fixed encoder+dataset+split
+configuration, regardless of what projection/SAE/loss is trained on top of
+it -- so `compute_raw_cache_key` deliberately depends on none of those,
+letting one cache be reused across every experiment that shares the same
+encoder. See `activation_loader.py`'s `mode="cache_encoder"`, which reads
+this cache and still runs the trainable `EncoderProjection` live, with
+gradients, every step.
 """
 
 from __future__ import annotations
@@ -21,45 +20,28 @@ from typing import Any
 import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
-from torch import Tensor, nn
+from torch import Tensor
 from torch.utils.data import Dataset
 
 
-def fingerprint_module(module: nn.Module) -> str:
-    """A short hash of every parameter/buffer's raw bytes, so a change to
-    (trainable) weights invalidates any cache keyed on this fingerprint."""
-    hasher = hashlib.sha256()
-    for _, tensor in sorted(module.state_dict().items()):
-        hasher.update(tensor.detach().cpu().numpy().tobytes())
-    return hasher.hexdigest()[:16]
-
-
-def compute_cache_key(
+def compute_raw_cache_key(
     encoder_cfg: DictConfig,
-    projection_fingerprint: str,
-    upsampler_cfg: DictConfig,
     dataset_name: str,
     split: str,
     image_size: int,
 ) -> str:
     payload: dict[str, Any] = {
         "encoder": OmegaConf.to_container(encoder_cfg, resolve=True),
-        "projection_fingerprint": projection_fingerprint,
-        # Only the upsampler matters for the cache if it runs before the SAE;
-        # a "latents"-stage (or disabled) upsampler never touches what's cached.
-        "upsampler": OmegaConf.to_container(upsampler_cfg, resolve=True)
-        if upsampler_cfg.get("stage") == "features"
-        else {"stage": "none"},
         "dataset": dataset_name,
         "split": split,
         "image_size": image_size,
     }
     blob = json.dumps(payload, sort_keys=True).encode("utf-8")
-    return hashlib.sha256(blob).hexdigest()[:16]
+    return "raw_" + hashlib.sha256(blob).hexdigest()[:16]
 
 
 class MemmapActivationWriter:
-    """Writes [C, H, W] projected features + labels for `num_samples` images
+    """Writes [C, H, W] raw encoder features + labels for `num_samples` images
     to a numpy memmap, one batch at a time, in the exact order they're given."""
 
     def __init__(
@@ -102,17 +84,16 @@ class MemmapActivationWriter:
 
 class CachedActivationDataset(Dataset):
     """Reads back what `MemmapActivationWriter` wrote. Each item is one image's
-    already-projected (and possibly feature-upsampled) [C, H, W] tensor --
-    the training loop still has to `flatten_spatial` a whole batch of these
-    into [B, P, C] itself, exactly as the live path does."""
+    raw encoder-output [C, H, W] tensor -- the training loop still has to run
+    the projection (and `flatten_spatial` a whole batch) itself, exactly as
+    `activation_loader.py`'s `mode="cache_encoder"` transform does."""
 
     def __init__(self, cache_dir: str, cache_key: str) -> None:
         self.dir = Path(cache_dir) / cache_key
         meta_path = self.dir / "meta.json"
         if not meta_path.exists():
             raise FileNotFoundError(
-                f"no cache found at {self.dir} (missing meta.json) -- run scripts/extract_features.py "
-                "first, or set train.cache.mode=extract_and_cache to build it automatically."
+                f"no cache found at {self.dir} (missing meta.json) -- run scripts/extract_raw_features.py first."
             )
         meta = json.loads(meta_path.read_text())
         self.shape = tuple(meta["shape"])

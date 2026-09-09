@@ -3,8 +3,8 @@
 Every entry maps a short name (matching a `conf/dataset/*.yaml` file) to the
 `Dataset` class Hydra's `_target_` should instantiate. This registry itself
 is not required for Hydra to work (`_target_` already names the class
-directly), but it gives ``scripts/extract_features.py`` and other tooling a
-single place to enumerate "every dataset this codebase knows about" without
+directly), but it gives ``scripts/extract_raw_features.py`` and other tooling
+a single place to enumerate "every dataset this codebase knows about" without
 importing every dataset module.
 """
 

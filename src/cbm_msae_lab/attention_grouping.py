@@ -103,11 +103,9 @@ def onehot_l2_aggregate(f_img: Tensor, group_labels: Tensor, n_clusters: int) ->
 def compute_group_cache_key(
     encoder_cfg: DictConfig, n_clusters: int, spatial_coeff: float, dataset_name: str, split: str, image_size: int
 ) -> str:
-    """Analogous to `caching.compute_cache_key`, but deliberately independent of
-    it: group labels depend only on the frozen encoder's attention and the
-    clustering hyperparameters -- never on `EncoderProjection` (unlike the
-    feature cache, which does depend on it) -- so this is its own cache
-    namespace, not a variant of the feature cache's key.
+    """Analogous to `caching.compute_raw_cache_key`, but its own namespace: group
+    labels depend on the frozen encoder's attention and the clustering
+    hyperparameters, not on anything the raw-feature cache key covers.
     """
     payload: dict[str, Any] = {
         "encoder": OmegaConf.to_container(encoder_cfg, resolve=True),
