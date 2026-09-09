@@ -45,6 +45,13 @@ class ComposableLossTrainer(MatryoshkaBatchTopKTrainer):
     ) -> None:
         dict_class = partial(ConfigurableActivationSAE, activation=activation)
         super().__init__(dict_class=dict_class, **kwargs)
+        # BatchTopK's learned inference threshold (see module docstring) isn't
+        # in the base trainer's own `logging_parameters` -- add it so
+        # scripts/train.py's `trainer.get_logging_parameters()` call picks it
+        # up automatically every `log_every_n_steps`. Degenerate runs (see the
+        # S2AE group-sparsity/exclusivity interaction) are otherwise invisible
+        # until someone inspects a checkpoint's state dict by hand.
+        self.logging_parameters = [*self.logging_parameters, "threshold"]
         self.grid_shape = grid_shape
         self.activation: Activation = activation
         self.losses: dict[str, Loss] = build_losses(loss_config)
@@ -61,6 +68,13 @@ class ComposableLossTrainer(MatryoshkaBatchTopKTrainer):
         # the per-term breakdown reaches `scripts/train.py`'s wandb logging
         # without needing to override `update()` just to change what it returns.
         self.last_per_loss_values: dict[str, float] = {}
+
+    @property
+    def threshold(self) -> float:
+        """The BatchTopK inference threshold (`self.ae.threshold`, a scalar
+        buffer on the model, not the trainer) as a plain float, so
+        `get_logging_parameters()`'s `getattr(self, "threshold")` finds it."""
+        return float(self.ae.threshold)
 
     @staticmethod
     def geometric_median(points: Tensor, max_iter: int = 100, tol: float = 1e-5) -> Tensor:
