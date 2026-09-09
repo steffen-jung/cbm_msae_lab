@@ -50,6 +50,6 @@ class ExclusivityLoss(Loss):
                 )
             s_g = onehot_l2_aggregate(ctx.f_img, ctx.group_labels, self.n_clusters)  # [B, n_clusters, dict_size]
 
-        s_g = ste_binarize(s_g)  # forward: {0, 1} gate; backward: identity gradient into s_g
+        s_g = ste_binarize(s_g)  # forward: {0, 1} gate; backward: saturating (tanh) gradient into s_g
         per_latent = s_g.sum(dim=1)  # sum_g |s^g_j| -> [B, dict_size] -- already >= 0, no .abs() needed
         return per_latent.pow(2).mean()  # mean over both latents and batch
