@@ -269,6 +269,27 @@ class EvalConfig:
 
 
 @dataclass
+class EarlyStoppingConfig:
+    """Stops training once `val/mse` stops improving, checked every
+    `eval.every_n_epochs` epochs (the only cadence `val/mse` is actually
+    computed on) -- `patience` therefore counts *eval checks*, not epochs:
+    the default `patience=6` at the default `eval.every_n_epochs=5` tolerates
+    30 epochs without improvement before stopping, which is generous enough
+    to ride out the noise from `eval.max_eval_samples`-subsampled MSE
+    estimates without being so patient it never actually saves compute.
+    `min_delta` is a *relative* improvement threshold (a new best must be at
+    least this fraction below the previous best) since `val/mse`'s absolute
+    scale depends on the encoder's raw feature magnitude, not a fixed range.
+    `train.epochs` remains a hard cap in case `val/mse` never plateaus (or
+    `enabled=False` disables early stopping and always trains the full cap).
+    """
+
+    enabled: bool = True
+    patience: int = 6
+    min_delta: float = 1e-3
+
+
+@dataclass
 class WandbConfig:
     project: str = "cbm-msae-lab"
     mode: str = "online"  # "online" | "offline" | "disabled"
@@ -279,13 +300,17 @@ class WandbConfig:
 class TrainConfig:
     batch_size: int = 64
     num_workers: int = 4
-    epochs: int = 50
+    # A hard cap, not a target -- `early_stopping` (on by default) almost
+    # always stops well before this. Set well above the old fixed 50-epoch
+    # default so early stopping, not this cap, decides when training ends.
+    epochs: int = 200
     device: str = "cuda"
     checkpoint_dir: str = "outputs/checkpoints"
     checkpoint_every_n_epochs: int = 5
     log_every_n_steps: int = 50
     cache: CacheConfig = field(default_factory=CacheConfig)
     eval: EvalConfig = field(default_factory=EvalConfig)
+    early_stopping: EarlyStoppingConfig = field(default_factory=EarlyStoppingConfig)
     wandb: WandbConfig = field(default_factory=WandbConfig)
 
 

@@ -23,15 +23,16 @@ from pathlib import Path
 import hydra
 import hydra.utils
 import torch
-import wandb
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
+import wandb
 from cbm_msae_lab.activation_loader import ActivationLoader, build_activation_loader
 from cbm_msae_lab.attention_grouping import CachedGroupLabelDataset, compute_group_cache_key
 from cbm_msae_lab.checkpointing import save_checkpoint
 from cbm_msae_lab.config_schema import register_configs
+from cbm_msae_lab.early_stopping import EarlyStopping
 from cbm_msae_lab.encoders.base import Encoder
 from cbm_msae_lab.metrics.fvu import FVUMetric
 from cbm_msae_lab.metrics.monosemanticity import MonosemanticityScore
@@ -211,6 +212,12 @@ def main(cfg: DictConfig) -> None:
     checkpoint_dir = Path(cfg.train.checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
+    early_stopping = (
+        EarlyStopping(patience=cfg.train.early_stopping.patience, min_delta=cfg.train.early_stopping.min_delta)
+        if cfg.train.early_stopping.enabled
+        else None
+    )
+
     step = 0
     for epoch in range(cfg.train.epochs):
         pipeline.train()
@@ -247,15 +254,27 @@ def main(cfg: DictConfig) -> None:
             step += 1
 
         is_last_epoch = epoch == cfg.train.epochs - 1
+        should_stop = False
         if (epoch + 1) % cfg.train.eval.every_n_epochs == 0 or is_last_epoch:
             eval_logs = run_eval(pipeline, trainer, val_loader, cfg, device)
             wandb.log(eval_logs, step=step)
             log.info(f"epoch {epoch}: {eval_logs}")
 
-        if (epoch + 1) % cfg.train.checkpoint_every_n_epochs == 0 or is_last_epoch:
+            if early_stopping is not None and early_stopping.step(eval_logs["val/mse"]):
+                log.info(
+                    f"early stopping at epoch {epoch}: val/mse hasn't improved by >= "
+                    f"{cfg.train.early_stopping.min_delta:.1%} for {cfg.train.early_stopping.patience} "
+                    f"eval checks (best val/mse={early_stopping.best:.6g})"
+                )
+                should_stop = True
+
+        if (epoch + 1) % cfg.train.checkpoint_every_n_epochs == 0 or is_last_epoch or should_stop:
             path = checkpoint_dir / f"epoch_{epoch:04d}.pt"
             save_checkpoint(str(path), pipeline, trainer, projection_optimizer, cfg, step, epoch)
             log.info(f"saved checkpoint: {path}")
+
+        if should_stop:
+            break
 
     wandb.finish()
 

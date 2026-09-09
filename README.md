@@ -77,6 +77,13 @@ spent on the actual training step) -- see `timing.py::TimedLoader`. Every
 active loss term is logged individually too (`train/loss_reconstruction`,
 `train/loss_scale_spatial`, ...), not just the weighted total.
 
+`train.epochs=200` is a hard cap, not a target: `train.early_stopping` (on by
+default) stops once `val/mse` hasn't improved by >= `min_delta` (a relative
+fraction) for `patience` consecutive eval checks -- checks happen every
+`train.eval.every_n_epochs` epochs, so `patience` counts *checks*, not
+epochs. See `early_stopping.py::EarlyStopping`. Disable with
+`train.early_stopping.enabled=false` to always train the full `epochs` cap.
+
 ## Downstream task accuracy (post-hoc, after training)
 
 `scripts/evaluate_task_accuracy.py` measures how much of CUB's 200-way
@@ -89,7 +96,7 @@ un-bottlenecked ceiling), the SAE's dense activation (`a`), and its
 inference-time thresholded activation (`z`, what CFM calls its "concepts").
 
 ```bash
-uv run scripts/evaluate_task_accuracy.py --checkpoint outputs/checkpoints/epoch_0049.pt
+uv run scripts/evaluate_task_accuracy.py --checkpoint outputs/checkpoints/epoch_0199.pt
 ```
 
 Only ever run this on a *finished* checkpoint -- it reads the checkpoint's own
