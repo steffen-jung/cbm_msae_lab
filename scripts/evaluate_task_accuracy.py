@@ -45,6 +45,7 @@ import torch
 from omegaconf import DictConfig
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 
 from cbm_msae_lab.checkpointing import load_for_reproduction
 from cbm_msae_lab.pipeline import ConceptPipeline
@@ -69,7 +70,7 @@ def parse_args() -> argparse.Namespace:
 
 @torch.no_grad()
 def extract_pooled_representations(
-    pipeline: ConceptPipeline, dataset: Dataset, batch_size: int, device: str
+    pipeline: ConceptPipeline, dataset: Dataset, batch_size: int, device: str, split: str
 ) -> tuple[dict[str, Tensor], npt.NDArray[np.int64]]:
     """One forward pass over `dataset`; returns per-image max-pooled
     f_raw/f_plus/a/z representations (in dataset order) plus the int64 class labels.
@@ -89,7 +90,7 @@ def extract_pooled_representations(
     z_chunks: list[Tensor] = []
     label_chunks: list[Tensor] = []
 
-    for images, labels, _idx in loader:
+    for images, labels, _idx in tqdm(loader, desc=f"extract[{split}]", unit="batch"):
         images = images.to(device)  # [B, 3, H_img, W_img]
         raw = pipeline.encoder(images).features  # [B, C_enc, H0, W0] -- CFM's F+
         features = pipeline.project(images)  # [B, C_sae, H, W]
@@ -135,7 +136,7 @@ def build_combined_representations(
     for split in ("train", "val", "test"):
         dataset = hydra.utils.instantiate(cfg.dataset, split=split)
         n_classes = len(dataset.class_names)
-        reps, labels = extract_pooled_representations(pipeline, dataset, batch_size, device)
+        reps, labels = extract_pooled_representations(pipeline, dataset, batch_size, device, split)
         per_split[split] = (reps, labels, len(dataset))
         log.info(f"[{split}] extracted {len(dataset)} images")
 

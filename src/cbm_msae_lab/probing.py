@@ -28,6 +28,7 @@ import numpy.typing as npt
 import torch
 import torch.nn.functional as F
 from torch import Tensor
+from tqdm import tqdm
 
 BoolArray = npt.NDArray[np.bool_]
 IntArray = npt.NDArray[np.int64]
@@ -230,17 +231,17 @@ def run_probe(
     best: SeedResult | None = None
     best_lr = cfg.lr
     lam = 0.0
-    for lr in cfg.lr_grid:
+    sweep = [(lr, candidate_lam) for lr in cfg.lr_grid for candidate_lam in cfg.lambda_grid]
+    for lr, candidate_lam in tqdm(sweep, desc=f"probe[{name}] sweep", unit="cfg"):
         trial_cfg = replace(cfg, lr=lr)
-        for candidate_lam in cfg.lambda_grid:
-            trial = train_once(data, trial_cfg, candidate_lam, probe_seed)
-            if best is None or trial.val_top1 > best.val_top1:
-                best, best_lr, lam = trial, lr, candidate_lam
+        trial = train_once(data, trial_cfg, candidate_lam, probe_seed)
+        if best is None or trial.val_top1 > best.val_top1:
+            best, best_lr, lam = trial, lr, candidate_lam
     assert best is not None
     chosen = replace(cfg, lr=best_lr)
 
     results: list[SeedResult] = [best]
-    for extra_seed in seeds[1:]:
+    for extra_seed in tqdm(seeds[1:], desc=f"probe[{name}] seeds", unit="seed"):
         results.append(train_once(data, chosen, lam, int(extra_seed)))
 
     top1 = np.asarray([r.test_top1 for r in results], dtype=np.float64)
