@@ -34,4 +34,4 @@ uv run scripts/train.py \
     projection=k1 \
     train.cache.mode=cache_encoder \
     train.checkpoint_dir=outputs/checkpoints/cub_k1_cfm_vanilla \
-    wandb.run_name=cub_k1_cfm_vanilla
+    train.wandb.run_name=cub_k1_cfm_vanilla

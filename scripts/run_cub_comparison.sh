@@ -17,7 +17,7 @@ cd "$(dirname "$0")/.."
 uv run scripts/train.py \
     projection=k1 \
     train.checkpoint_dir=outputs/checkpoints/cub_k1_cfm_vanilla \
-    wandb.run_name=cub_k1_cfm_vanilla
+    train.wandb.run_name=cub_k1_cfm_vanilla
 
 # --- Run 2: Spatial-Loss statt Standard-Rekonstruktion -------------------
 # reconstruction.weight=0.0, da scale_spatial's s=1-Term bereits die volle
@@ -28,7 +28,7 @@ uv run scripts/train.py \
     loss.reconstruction.weight=0.0 \
     loss.scale_spatial.weight=1.0 \
     train.checkpoint_dir=outputs/checkpoints/cub_k1_spatial \
-    wandb.run_name=cub_k1_spatial
+    train.wandb.run_name=cub_k1_spatial
 
 # --- Run 3: S2AE group-sparsity/exclusivity (additiv zur Rekonstruktion) -
 # Einmalig vorher: Attention-Gruppen-Cache bauen (wird von allen künftigen
@@ -40,4 +40,4 @@ uv run scripts/train.py \
     loss.group_sparsity.grouping=attention loss.group_sparsity.weight=0.1 \
     loss.exclusivity.grouping=attention loss.exclusivity.weight=0.1 \
     train.checkpoint_dir=outputs/checkpoints/cub_k1_s2ae \
-    wandb.run_name=cub_k1_s2ae
+    train.wandb.run_name=cub_k1_s2ae
