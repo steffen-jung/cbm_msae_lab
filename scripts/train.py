@@ -26,6 +26,7 @@ import torch
 import wandb
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import Dataset
+from tqdm import tqdm
 
 from cbm_msae_lab.activation_loader import ActivationLoader, build_activation_loader
 from cbm_msae_lab.attention_grouping import CachedGroupLabelDataset, compute_group_cache_key
@@ -39,6 +40,7 @@ from cbm_msae_lab.metrics.tversky_ms import TverskyMS
 from cbm_msae_lab.pipeline import ConceptPipeline
 from cbm_msae_lab.projection import EncoderProjection
 from cbm_msae_lab.sae.trainer import ComposableLossTrainer
+from cbm_msae_lab.timing import TimedLoader
 from cbm_msae_lab.upsampling.base import Upsampler
 
 register_configs()
@@ -194,7 +196,7 @@ def main(cfg: DictConfig) -> None:
 
     pipeline = ConceptPipeline(encoder, projection, upsampler, trainer.ae).to(device)
 
-    train_loader = build_activation_loader(cfg, "train", train_dataset, pipeline, device)
+    train_loader = TimedLoader(build_activation_loader(cfg, "train", train_dataset, pipeline, device))
     val_loader = build_activation_loader(cfg, "val", val_dataset, pipeline, device)
 
     train_group_labels = load_group_label_dataset(cfg, "train") if needs_attention_grouping(cfg) else None
@@ -212,7 +214,8 @@ def main(cfg: DictConfig) -> None:
     step = 0
     for epoch in range(cfg.train.epochs):
         pipeline.train()
-        for x_img, _labels, idx in train_loader:
+        pbar = tqdm(train_loader, total=steps_per_epoch, desc=f"epoch {epoch}")
+        for x_img, _labels, idx in pbar:
             if train_group_labels is not None:
                 trainer.group_labels = train_group_labels.get_batch(idx).to(device)
 
@@ -222,10 +225,24 @@ def main(cfg: DictConfig) -> None:
             )  # runs loss.backward() internally, populating projection's .grad too
             projection_optimizer.step()
 
+            pbar.set_postfix(
+                loss=f"{loss_value:.4f}",
+                wait_ms=f"{train_loader.data_wait_s * 1000:.0f}",
+                compute_ms=f"{train_loader.compute_s * 1000:.0f}",
+            )
+
             if step % cfg.train.log_every_n_steps == 0:
-                logs = {"train/loss": loss_value, "train/epoch": epoch}
+                logs = {
+                    "train/loss": loss_value,
+                    "train/epoch": epoch,
+                    "train/dataloader_wait_ms": train_loader.data_wait_s * 1000,
+                    "train/dataloader_compute_ms": train_loader.compute_s * 1000,
+                    "train/dataloader_bottleneck_frac": train_loader.bottleneck_fraction,
+                }
                 for name, value in trainer.get_logging_parameters().items():
                     logs[f"train/{name}"] = value
+                for name, value in trainer.last_per_loss_values.items():
+                    logs[f"train/loss_{name}"] = value
                 wandb.log(logs, step=step)
             step += 1
 

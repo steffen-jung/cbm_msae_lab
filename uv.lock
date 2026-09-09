@@ -248,6 +248,7 @@ dependencies = [
     { name = "scikit-learn" },
     { name = "timm" },
     { name = "torchmetrics" },
+    { name = "tqdm" },
 ]
 
 [package.dev-dependencies]
@@ -267,6 +268,7 @@ requires-dist = [
     { name = "scikit-learn", specifier = ">=1.9.0" },
     { name = "timm", specifier = ">=1.0.29" },
     { name = "torchmetrics", specifier = ">=1.9.0" },
+    { name = "tqdm", specifier = ">=4.67.0" },
 ]
 
 [package.metadata.requires-dev]

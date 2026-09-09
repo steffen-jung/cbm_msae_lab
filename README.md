@@ -44,10 +44,56 @@ uv run scripts/extract_features.py
 uv run scripts/train.py train.cache.mode=cache
 ```
 
+Example: comparing CFM's own reconstruction loss against the scale/spatial
+loss and the S2AE losses, everything else fixed (1x1 projection, no
+upsampling, ReLU). Note that `reconstruction` and `scale_spatial` are
+*alternatives*, not additive -- `scale_spatial`'s finest scale (`s=1`) is
+already the same full-patch reconstruction as `reconstruction`'s own finest
+Matryoshka-group term (see `scale_spatial.py`'s docstring), so running both
+at once would double-weight it. `group_sparsity`/`exclusivity`, in contrast,
+are pure regularizers and stack fine on top of the standard reconstruction:
+
+```bash
+uv run scripts/train.py projection=k1                                          # CFM vanilla
+uv run scripts/train.py projection=k1 loss.reconstruction.weight=0.0 \
+  loss.scale_spatial.weight=1.0                                                # spatial loss instead
+uv run scripts/extract_attention_groups.py --split train                       # once, before the S2AE run
+uv run scripts/train.py projection=k1 \
+  loss.group_sparsity.grouping=attention loss.group_sparsity.weight=0.1 \
+  loss.exclusivity.grouping=attention loss.exclusivity.weight=0.1              # + S2AE losses
+```
+
 Every checkpoint (`outputs/checkpoints/epoch_XXXX.pt` by default) is a single
 file containing the projection + SAE weights, both optimizers' states, and
 the *entire* resolved Hydra config -- `checkpointing.load_for_reproduction`
 rebuilds the exact pipeline from that one file.
+
+The training loop's progress bar (and wandb, every `train.log_every_n_steps`)
+also reports whether the DataLoader is the bottleneck: `train/dataloader_wait_ms`
+(time spent waiting for the next batch) vs. `train/dataloader_compute_ms` (time
+spent on the actual training step) -- see `timing.py::TimedLoader`. Every
+active loss term is logged individually too (`train/loss_reconstruction`,
+`train/loss_scale_spatial`, ...), not just the weighted total.
+
+## Downstream task accuracy (post-hoc, after training)
+
+`scripts/evaluate_task_accuracy.py` measures how much of CUB's 200-way
+classification signal survives the SAE's concept bottleneck, by training a
+linear probe (CFM paper's own protocol, App. B.5: AdamW, learning-rate and
+L1-sparsity sweep, best checkpoint by held-out accuracy -- see `probing.py`)
+on three per-image-pooled representations extracted from one checkpoint:
+the raw projected encoder feature (`f_plus`, the reconstruction target, an
+un-bottlenecked ceiling), the SAE's dense activation (`a`), and its
+inference-time thresholded activation (`z`, what CFM calls its "concepts").
+
+```bash
+uv run scripts/evaluate_task_accuracy.py --checkpoint outputs/checkpoints/epoch_0049.pt
+```
+
+Only ever run this on a *finished* checkpoint -- it reads the checkpoint's own
+stored config to rebuild the exact encoder/projection/SAE, so it never needs
+its own Hydra config. Writes a JSON report (top-1/top-5 per representation,
+per seed) to `outputs/task_accuracy/<checkpoint-stem>.json`.
 
 ## Attention-based patch grouping (optional)
 
@@ -87,3 +133,7 @@ checkpoint/network dependency is actually available.
   always invoked directly, left entirely to you.
 - This repo's git history is yours to manage: nothing here commits on your
   behalf.
+- `cache/`, `checkpoints/`, and `outputs/` are symlinks into
+  `/ceph/faroesch/cbm_msae_lab_*` (Home has a much smaller quota than `/ceph`)
+  -- created once, transparent to every path in the config, nothing to set up
+  per-run.

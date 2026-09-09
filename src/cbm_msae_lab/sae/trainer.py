@@ -55,6 +55,12 @@ class ComposableLossTrainer(MatryoshkaBatchTopKTrainer):
         # unchanged from `dictionary_learning` and calls `self.loss(x, step=step)`
         # with a fixed signature we don't want to have to override just for this.
         self.group_labels: Tensor | None = None
+        # Populated by every `loss()` call (regardless of `logging`), since the
+        # inherited `update()` always calls `self.loss(x, step=step)` with the
+        # default `logging=False` and only keeps the scalar total -- this is how
+        # the per-term breakdown reaches `scripts/train.py`'s wandb logging
+        # without needing to override `update()` just to change what it returns.
+        self.last_per_loss_values: dict[str, float] = {}
 
     @staticmethod
     def geometric_median(points: Tensor, max_iter: int = 100, tol: float = 1e-5) -> Tensor:
@@ -109,6 +115,8 @@ class ComposableLossTrainer(MatryoshkaBatchTopKTrainer):
             value = loss_obj.compute(ctx)
             total = total + loss_obj.weight * value
             per_loss_values[name] = float(value.item())
+
+        self.last_per_loss_values = per_loss_values
 
         if not logging:
             return total
