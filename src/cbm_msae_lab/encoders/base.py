@@ -1,8 +1,8 @@
 """Abstract interface every encoder backbone implements.
 
 An ``Encoder`` is always frozen (no gradients ever flow into it): it maps raw
-images to a dense spatial feature grid. Everything downstream (the trainable
-``EncoderProjection``, the optional upsampler, the SAE) only depends on this
+images to a dense spatial feature grid, which the SAE consumes directly.
+Everything downstream (the optional upsampler, the SAE) only depends on this
 interface, so swapping CLIP-DINOiser for DINOv3 never requires touching any
 other module.
 """
@@ -37,7 +37,7 @@ class Encoder(nn.Module, ABC):
     """Base class for frozen vision backbones used as the SAE's input features."""
 
     #: Native channel dimension of `features` (set by subclasses); read by
-    #: `ProjectionConfig.in_channels`'s `${encoder.output_dim}` interpolation.
+    #: `SAEConfig.activation_dim`'s `${encoder.output_dim}` interpolation.
     output_dim: int
 
     def __init__(self) -> None:

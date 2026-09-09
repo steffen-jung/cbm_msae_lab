@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
-# Selbst einreichen mit: sbatch scripts/sbatch/cub_k1_cfm_vanilla_cached.sbatch
+# Selbst einreichen mit: sbatch scripts/sbatch/cub_cfm_vanilla_cached.sbatch
 #
-# Baut den Roh-Encoder-Cache einmalig (train+val, nur CLIP-DINOiser-Output,
-# VOR der Projektion) und trainiert danach CFM vanilla auf CUB daraus -- der
+# Run 1 des CFM-vs-Spatial-vs-S2AE-Vergleichs (siehe cub_spatial_cached.sbatch,
+# cub_s2ae_*_cached.sbatch). Baut den Roh-Encoder-Cache einmalig (train+val,
+# CLIP-DINOiser-Output) und trainiert danach CFM vanilla auf CUB daraus -- der
 # teure, eingefrorene Encoder-Forward laeuft dann nur einmal pro Split statt
-# einmal pro Epoche. Die 1x1-Projektion selbst laeuft weiterhin live mit
-# Gradient jeden Schritt und wird ganz normal mittrainiert.
+# einmal pro Epoche. Da nichts Trainierbares zwischen Encoder und SAE sitzt,
+# ist der Cache exakt das, was die SAE konsumiert. Diesen Job zuerst laufen
+# lassen (oder zumindest zuerst durchlaufen lassen bis der Cache steht) --
+# Run 2/3 nutzen denselben Roh-Encoder-Cache und extrahieren ihn nicht nochmal.
 #
 # Partition per --partition unten waehlen: gpu-vram-12gb (RTX 2080 Ti, 12GB)
-# oder gpu-vram-48gb (RTX A6000/A40, 48GB). Fuer den 1x1-Kernel-Fall reicht
-# ein 12GB-Slot vermutlich locker; auf 48gb ausweichen, falls's eng wird oder
-# die 12gb-Queue voll ist.
+# oder gpu-vram-48gb (RTX A6000/A40, 48GB); 12GB reicht hier vermutlich locker,
+# auf 48gb ausweichen, falls's eng wird oder die 12gb-Queue voll ist.
 
-#SBATCH --job-name=cub-k1-cfm-vanilla
+#SBATCH --job-name=cub-cfm-vanilla
 #SBATCH --partition=gpu-vram-12gb
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
@@ -31,7 +33,6 @@ uv run scripts/extract_raw_features.py --split train
 uv run scripts/extract_raw_features.py --split val
 
 uv run scripts/train.py \
-    projection=k1 \
     train.cache.mode=cache_encoder \
-    train.checkpoint_dir=outputs/checkpoints/cub_k1_cfm_vanilla \
-    train.wandb.run_name=cub_k1_cfm_vanilla
+    train.checkpoint_dir=outputs/checkpoints/cub_cfm_vanilla \
+    train.wandb.run_name=cub_cfm_vanilla

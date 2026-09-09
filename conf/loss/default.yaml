@@ -19,15 +19,16 @@ scale_spatial:
 
 group_sparsity:
   weight: 0.0  # S2AE group sparsity loss (arXiv:2607.08605, Eq. 9)
-  grouping: tile  # "tile" (fixed grid, default) | "attention" (S2AE-style clustering, needs a group-label cache)
+  grouping: tile  # "tile" (fixed grid, default) | "attention" | "feature" (both need a group-label cache)
   tile_size: 2
 
 exclusivity:
   weight: 0.0  # S2AE exclusive sparsity loss (arXiv:2607.08605, Eq. 10)
-  grouping: tile  # "tile" | "attention"
+  grouping: tile  # "tile" | "attention" | "feature"
   tile_size: 2
 
-# Only used when group_sparsity.grouping or exclusivity.grouping is "attention".
+# Only used when group_sparsity.grouping or exclusivity.grouping is "attention"
+# or "feature" -- shared by both clustering methods (see AttentionGroupingConfig).
 # Defaults match S2AE's own repo (github.com/liaoweiduo/s2ae).
 attention_grouping:
   n_clusters: 20

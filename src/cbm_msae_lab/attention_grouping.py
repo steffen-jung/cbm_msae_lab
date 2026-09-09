@@ -21,6 +21,13 @@ is per-image (unlike a shared spatial tile) and needs `scikit-learn`'s
 step -- so this module also provides the on-disk caching
 (`GroupLabelWriter`/`CachedGroupLabelDataset`) that lets it be computed once
 per image and reused, exactly like `caching.py`'s activation cache.
+
+A second clustering method, ``cluster_patches_by_features`` (``grouping="feature"``),
+uses the encoder's raw per-patch features (cosine similarity) instead of its
+attention -- added because attention-based clusters turned out not to be
+granular enough on the bird itself. Both methods share the same on-disk
+caching machinery and cache-key scheme (`compute_group_cache_key`'s `method`
+argument); see `scripts/extract_attention_groups.py --method`.
 """
 
 from __future__ import annotations
@@ -81,6 +88,36 @@ def cluster_patches(
     return agnes.fit_predict(distance).astype(np.int64)
 
 
+def cluster_patches_by_features(
+    features: Tensor, grid_h: int, grid_w: int, n_clusters: int = 20, spatial_coeff: float = 0.02
+) -> NDArray[np.int64]:
+    """Like `cluster_patches`, but similarity comes from the frozen encoder's
+    raw per-patch features (cosine similarity) instead of its attention.
+    Added after attention-based clusters turned out not to be granular enough
+    on the bird itself (too much weight on background/spatial structure) --
+    see `notebooks/attention_maps.ipynb` for the visual comparison this was
+    prototyped in.
+
+    features: [C, grid_h, grid_w] -> labels: [P], P = grid_h * grid_w.
+    """
+    c, h, w = features.shape
+    f = features.reshape(c, h * w).permute(1, 0)  # [P, C]
+    f = F.normalize(f, dim=-1)
+    sim = (f @ f.T).double().cpu().numpy()  # cosine similarity, [P, P]
+
+    d_feat = 1.0 - sim
+    d_min, d_max = d_feat.min(), d_feat.max()
+    d_range = d_max - d_min
+    d_feat = (d_feat - d_min) / d_range if d_range > 1e-12 else np.zeros_like(d_feat)
+
+    d_spatial = _manhattan_distance_matrix(grid_h, grid_w)
+    distance = d_feat * (d_spatial**spatial_coeff)
+
+    n_patches = distance.shape[0]
+    agnes = AgglomerativeClustering(n_clusters=min(n_clusters, n_patches), metric="precomputed", linkage="average")
+    return agnes.fit_predict(distance).astype(np.int64)
+
+
 def onehot_l2_aggregate(f_img: Tensor, group_labels: Tensor, n_clusters: int) -> Tensor:
     """The attention-grouping analogue of ``losses/tiling.py::tile_l2_norm``.
 
@@ -101,19 +138,29 @@ def onehot_l2_aggregate(f_img: Tensor, group_labels: Tensor, n_clusters: int) ->
 
 
 def compute_group_cache_key(
-    encoder_cfg: DictConfig, n_clusters: int, spatial_coeff: float, dataset_name: str, split: str, image_size: int
+    encoder_cfg: DictConfig,
+    n_clusters: int,
+    spatial_coeff: float,
+    dataset_cfg: DictConfig,
+    split: str,
+    method: str = "attention",
 ) -> str:
-    """Analogous to `caching.compute_raw_cache_key`, but its own namespace: group
-    labels depend on the frozen encoder's attention and the clustering
-    hyperparameters, not on anything the raw-feature cache key covers.
+    """Analogous to `caching.compute_raw_cache_key` (including hashing the whole
+    dataset config, so a redrawn train/val split can't reuse a stale cache), but
+    its own namespace: group labels depend on the frozen encoder's
+    attention/features and the clustering hyperparameters, not on anything the
+    raw-feature cache key covers. `method` ("attention" | "feature") is part of
+    the key so the two clustering approaches never collide in the same cache slot.
     """
+    if method not in ("attention", "feature"):
+        raise ValueError(f"unknown method {method!r}; expected 'attention' or 'feature'")
     payload: dict[str, Any] = {
         "encoder": OmegaConf.to_container(encoder_cfg, resolve=True),
         "n_clusters": n_clusters,
         "spatial_coeff": spatial_coeff,
-        "dataset": dataset_name,
+        "dataset": OmegaConf.to_container(dataset_cfg, resolve=True),
         "split": split,
-        "image_size": image_size,
+        "method": method,
     }
     blob = json.dumps(payload, sort_keys=True).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()[:16]

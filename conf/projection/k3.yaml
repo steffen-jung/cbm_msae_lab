@@ -1,8 +1,0 @@
-# 3x3 kernel: mixes each token with its spatial neighbours before the SAE sees it.
-defaults:
-  - base_k3
-
-_target_: cbm_msae_lab.projection.EncoderProjection
-in_channels: ${encoder.output_dim}
-out_channels: 512
-kernel_size: 3

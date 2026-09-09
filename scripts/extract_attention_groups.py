@@ -1,16 +1,17 @@
-"""Standalone attention-grouping cache builder for the S2AE-style
-`loss.group_sparsity.grouping=attention` / `loss.exclusivity.grouping=attention`
-option (see `attention_grouping.py`).
+"""Standalone patch-grouping cache builder for the S2AE-style
+`loss.group_sparsity.grouping={attention,feature}` /
+`loss.exclusivity.grouping={attention,feature}` options (see `attention_grouping.py`).
 
-Runs the dataset once through the (frozen) encoder with `extract_attention`
-forced on, clusters each image's patch-to-patch attention into groups
-(`AgglomerativeClustering`, S2AE's own default hyperparameters), and writes
-the resulting per-image `[P]` cluster-label arrays to a memmap cache. Never
-touches `EncoderProjection` or the SAE -- group labels depend only on the
-frozen encoder's attention, so this cache is reused across every SAE/loss
-experiment that shares the same encoder + clustering hyperparameters,
-regardless of what projection kernel size, SAE size, or other losses are
-used in a given training run.
+Runs the dataset once through the (frozen) encoder, clusters each image's
+patches into groups -- either by patch-to-patch attention (`--method
+attention`, needs `extract_attention=True`) or by raw per-patch feature
+similarity (`--method feature`, attention-free; try this if attention-based
+clusters aren't granular enough on the object itself) -- and writes the
+resulting per-image `[P]` cluster-label arrays to a memmap cache. Never
+touches the SAE -- group labels depend only on the frozen encoder, so this
+cache is reused across every SAE/loss experiment that shares the same
+encoder + clustering hyperparameters + method, regardless of what SAE size or
+losses are used in a given training run.
 
 This clustering is deliberately never done inside `scripts/train.py`'s
 training loop: `sklearn.cluster.AgglomerativeClustering` on a CPU, per image,
@@ -18,7 +19,8 @@ per batch, would be a severe bottleneck during GPU training. Run this script
 once beforehand instead.
 
 Examples:
-    uv run scripts/extract_attention_groups.py
+    uv run scripts/extract_attention_groups.py --method attention
+    uv run scripts/extract_attention_groups.py --method feature
     uv run scripts/extract_attention_groups.py encoder=dinov3 loss.attention_grouping.n_clusters=32
 """
 
@@ -32,7 +34,12 @@ import torch
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 
-from cbm_msae_lab.attention_grouping import GroupLabelWriter, cluster_patches, compute_group_cache_key
+from cbm_msae_lab.attention_grouping import (
+    GroupLabelWriter,
+    cluster_patches,
+    cluster_patches_by_features,
+    compute_group_cache_key,
+)
 from cbm_msae_lab.config_schema import Config, register_configs
 
 register_configs()
@@ -42,6 +49,12 @@ log = logging.getLogger(__name__)
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--split", choices=["train", "val", "test"], default="train")
+    parser.add_argument(
+        "--method",
+        choices=["attention", "feature"],
+        default="attention",
+        help="cluster by the encoder's self-attention (default) or its raw per-patch feature similarity",
+    )
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("overrides", nargs="*", help="Hydra-style config overrides, e.g. encoder=dinov3")
     args = parser.parse_args()
@@ -50,11 +63,11 @@ def main() -> None:
         cfg: Config = hydra.compose(config_name="config", overrides=args.overrides)  # type: ignore[assignment]
 
     device = args.device
-    # Force attention extraction on for this script regardless of the config's
-    # own `extract_attention` value -- that flag exists so `scripts/train.py`
-    # doesn't pay for hooks it isn't using, but this script's entire purpose is
-    # to extract attention.
-    encoder = hydra.utils.instantiate(cfg.encoder, extract_attention=True).to(device)
+    needs_attention = args.method == "attention"
+    # Force attention extraction on only when actually clustering by attention
+    # -- that flag exists so `scripts/train.py` doesn't pay for hooks it isn't
+    # using, and `--method feature` doesn't need it either.
+    encoder = hydra.utils.instantiate(cfg.encoder, extract_attention=needs_attention).to(device)
     encoder.eval()
 
     dataset = hydra.utils.instantiate(cfg.dataset, split=args.split)
@@ -67,34 +80,41 @@ def main() -> None:
         encoder_cfg=cfg.encoder,
         n_clusters=n_clusters,
         spatial_coeff=spatial_coeff,
-        dataset_name=cfg.dataset._target_,
+        dataset_cfg=cfg.dataset,
         split=args.split,
-        image_size=cfg.dataset.image_size,
+        method=args.method,
     )
-    log.info(f"Building attention-grouping cache for split={args.split!r} -> cache key {cache_key}")
+    log.info(f"Building {args.method}-grouping cache for split={args.split!r} -> cache key {cache_key}")
 
     writer: GroupLabelWriter | None = None
     with torch.no_grad():
         for images, _labels, _idx in loader:
             images = images.to(device)
             out = encoder(images)
-            if out.attention is None:
-                raise RuntimeError(
-                    f"{type(encoder).__name__} did not return an attention map even with extract_attention=True"
-                )
 
-            B, P, _ = out.attention.shape
             grid_h, grid_w = out.features.shape[-2], out.features.shape[-1]
-            if grid_h * grid_w != P:
-                raise RuntimeError(f"attention has {P} patches but the feature grid is {grid_h}x{grid_w}")
+            P = grid_h * grid_w
+            if needs_attention:
+                if out.attention is None:
+                    raise RuntimeError(
+                        f"{type(encoder).__name__} did not return an attention map even with extract_attention=True"
+                    )
+                if out.attention.shape[1] != P:
+                    raise RuntimeError(f"attention has {out.attention.shape[1]} patches but feature grid is {grid_h}x{grid_w}")
 
+            B = images.shape[0]
             if writer is None:
                 writer = GroupLabelWriter(cfg.train.cache.dir, cache_key, len(dataset), P)
 
             for b in range(B):
-                labels = cluster_patches(
-                    out.attention[b], grid_h, grid_w, n_clusters=n_clusters, spatial_coeff=spatial_coeff
-                )
+                if needs_attention:
+                    labels = cluster_patches(
+                        out.attention[b], grid_h, grid_w, n_clusters=n_clusters, spatial_coeff=spatial_coeff
+                    )
+                else:
+                    labels = cluster_patches_by_features(
+                        out.features[b], grid_h, grid_w, n_clusters=n_clusters, spatial_coeff=spatial_coeff
+                    )
                 writer.write(labels)
 
     if writer is None:

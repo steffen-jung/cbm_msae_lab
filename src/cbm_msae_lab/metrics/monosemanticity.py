@@ -39,8 +39,9 @@ class MonosemanticityScore(Metric):
 
     def update(self, activations: Tensor, embeddings: Tensor) -> None:
         """activations: [B, dict_size] (one activation strength per image per concept, e.g.
-        spatially max-pooled SAE latents). embeddings: [B, embed_dim], L2-normalized rows,
-        from an external encoder (e.g. this pipeline's own frozen backbone's global feature)."""
+        spatially max-pooled SAE latents). embeddings: [B, embed_dim], L2-normalized rows, from
+        a genuinely external encoder -- NOT the one the SAE is trained to reconstruct (see
+        `external_encoder.py`, which pairs CLIP-DINOiser <-> DINOv3)."""
         self.activations.append(activations.detach())
         self.embeddings.append(embeddings.detach())
 

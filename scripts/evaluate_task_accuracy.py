@@ -2,12 +2,20 @@
 
 How much of CUB's 200-way classification signal survives the SAE's concept
 bottleneck, compared to the raw (un-bottlenecked) feature it was trained to
-reconstruct? Three per-image-pooled representations are extracted from the
+reconstruct? Four per-image-pooled representations are extracted from the
 *same* checkpoint and each gets its own linear probe (see `probing.py` for
 the exact CFM-paper protocol):
 
-    f_plus  the projected (+ optionally upsampled) encoder feature -- the
-            SAE's reconstruction target. The ceiling: no bottleneck at all.
+    f_raw   the frozen encoder's own patch feature. This is exactly CFM's F+,
+            and it is what the published CFM numbers were measured on, so it
+            is the regression test that the encoder path is intact: on CUB with
+            CLIP-DINOiser it must land at ~73% top-1 / ~93% top-5
+            (`cfm_finegrained/results/phase1_residual_cub.json`, `f_plus_max`).
+    f_plus  the feature the SAE actually sees -- its reconstruction target, and
+            the ceiling: no bottleneck at all. Identical to `f_raw` unless a
+            feature-stage upsampler is configured, in which case only the
+            upsampling separates them; when they are identical it is skipped
+            rather than probed twice.
     a       the SAE's dense (unsparsified) concept activation.
     z       the SAE's inference-time thresholded (sparse) concept activation
             -- this is what CFM actually calls its "concepts".
@@ -16,7 +24,7 @@ This script only ever reads a *finished* checkpoint
 (`checkpointing.load_for_reproduction`) -- run it after training, never
 during. It carries no Hydra config of its own: the checkpoint already stores
 the exact resolved config it was trained under, which is all that's needed to
-rebuild the encoder/projection/upsampler/SAE and the matching CUB splits.
+rebuild the encoder/upsampler/SAE and the matching CUB splits.
 
 Example:
     uv run scripts/evaluate_task_accuracy.py --checkpoint outputs/checkpoints/epoch_0049.pt
@@ -44,7 +52,7 @@ from cbm_msae_lab.probing import ProbeConfig, ProbeResult, run_probe
 
 log = logging.getLogger(__name__)
 
-REPRESENTATIONS: tuple[str, ...] = ("f_plus", "a", "z")
+REPRESENTATIONS: tuple[str, ...] = ("f_raw", "f_plus", "a", "z")
 
 
 def parse_args() -> argparse.Namespace:
@@ -64,7 +72,7 @@ def extract_pooled_representations(
     pipeline: ConceptPipeline, dataset: Dataset, batch_size: int, device: str
 ) -> tuple[dict[str, Tensor], npt.NDArray[np.int64]]:
     """One forward pass over `dataset`; returns per-image max-pooled
-    f_plus/a/z representations (in dataset order) plus the int64 class labels.
+    f_raw/f_plus/a/z representations (in dataset order) plus the int64 class labels.
 
     Uses `pipeline.project` + a manual `sae.encode(..., return_active=True)`
     instead of `pipeline.forward` so both the dense (`a`) and thresholded
@@ -75,6 +83,7 @@ def extract_pooled_representations(
     loader: DataLoader[tuple[Tensor, int, int]] = DataLoader(
         dataset, batch_size=batch_size, shuffle=False, num_workers=4
     )
+    f_raw_chunks: list[Tensor] = []
     f_plus_chunks: list[Tensor] = []
     a_chunks: list[Tensor] = []
     z_chunks: list[Tensor] = []
@@ -82,6 +91,7 @@ def extract_pooled_representations(
 
     for images, labels, _idx in loader:
         images = images.to(device)  # [B, 3, H_img, W_img]
+        raw = pipeline.encoder(images).features  # [B, C_enc, H0, W0] -- CFM's F+
         features = pipeline.project(images)  # [B, C_sae, H, W]
         B, C, H, W = features.shape
         x_flat = features.permute(0, 2, 3, 1).reshape(B * H * W, C)  # [B*P, C_sae], P = H*W
@@ -94,12 +104,14 @@ def extract_pooled_representations(
         a_img = a_flat.reshape(B, H * W, dict_size).permute(0, 2, 1)  # [B, dict_size, P]
         z_img = z_flat.reshape(B, H * W, dict_size).permute(0, 2, 1)  # [B, dict_size, P]
 
+        f_raw_chunks.append(raw.flatten(2).max(dim=-1).values.cpu())  # [B, C_enc]
         f_plus_chunks.append(f_plus_img.max(dim=-1).values.cpu())  # [B, C_sae]
         a_chunks.append(a_img.max(dim=-1).values.cpu())  # [B, dict_size]
         z_chunks.append(z_img.max(dim=-1).values.cpu())  # [B, dict_size]
         label_chunks.append(labels)
 
     reps = {
+        "f_raw": torch.cat(f_raw_chunks, dim=0),  # [N, C_enc]
         "f_plus": torch.cat(f_plus_chunks, dim=0),  # [N, C_sae]
         "a": torch.cat(a_chunks, dim=0),  # [N, dict_size]
         "z": torch.cat(z_chunks, dim=0),  # [N, dict_size]
@@ -160,10 +172,17 @@ def main() -> None:
         f"train {int(train_mask.sum())} / val {int(val_mask.sum())} / test {int(test_mask.sum())}"
     )
 
+    to_probe = list(REPRESENTATIONS)
+    if torch.equal(reps["f_raw"], reps["f_plus"]):
+        # No feature-stage upsampler: the SAE's target *is* the encoder feature,
+        # so probing both would spend the whole grid twice on the same numbers.
+        to_probe.remove("f_plus")
+        log.info("f_plus == f_raw (no feature-stage upsampler) -- probing f_raw only")
+
     probe_cfg = ProbeConfig()
     device = torch.device(args.device)
     results: list[ProbeResult] = []
-    for name in REPRESENTATIONS:
+    for name in to_probe:
         result = run_probe(
             name=name,
             x=reps[name],

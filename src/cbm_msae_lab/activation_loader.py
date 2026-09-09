@@ -2,8 +2,8 @@
 pass, or a precomputed cache of the frozen encoder's raw output) a single
 switch, so the training loop never needs to know which one it's using --
 both yield the same (x_img [B, P, activation_dim], labels [B], idx [B])
-batches, and both run the trainable `EncoderProjection` live, with gradients,
-every step.
+batches. Nothing on this path is trainable: what the SAE reconstructs is the
+frozen encoder's own patch feature.
 """
 
 from __future__ import annotations
@@ -65,20 +65,15 @@ def build_activation_loader(
     if mode != "cache_encoder":
         raise ValueError(f"unknown cache.mode {mode!r}; expected 'live' or 'cache_encoder'")
 
-    # Skips the expensive frozen-encoder forward (cached), but still runs the
-    # *trainable* projection live, with gradients, every step.
+    # Skips the expensive frozen-encoder forward entirely -- the cache already
+    # holds exactly what the SAE consumes.
     if pipeline.upsampler.stage == "features":
         raise ValueError(
             "mode='cache_encoder' only caches raw encoder features, not the original images -- a "
             "feature-stage upsampler (e.g. AnyUp) needs the image for guidance and can't run from this "
             "cache. Use upsampler.stage='latents' or 'none' instead."
         )
-    cache_key = compute_raw_cache_key(
-        encoder_cfg=cfg.encoder,
-        dataset_name=cfg.dataset._target_,
-        split=split,
-        image_size=cfg.dataset.image_size,
-    )
+    cache_key = compute_raw_cache_key(encoder_cfg=cfg.encoder, dataset_cfg=cfg.dataset, split=split)
     try:
         cached_dataset = CachedActivationDataset(cfg.train.cache.dir, cache_key)
     except FileNotFoundError as e:
@@ -99,9 +94,7 @@ def build_activation_loader(
         # No upsampler call here: the ValueError above already ruled out
         # stage="features"; "latents"/"none" upsamplers never touch this
         # (pre-SAE) point in the pipeline.
-        raw_features, labels, idx = batch  # raw_features: [B, C_backbone, H0, W0]
-        raw_features = raw_features.to(device)
-        projected = pipeline.projection(raw_features)  # [B, C_sae, H0, W0]
-        return flatten_spatial(projected), labels.to(device), idx
+        raw_features, labels, idx = batch  # raw_features: [B, C_sae, H0, W0]
+        return flatten_spatial(raw_features.to(device)), labels.to(device), idx
 
     return ActivationLoader(raw_loader, cache_encoder_transform)

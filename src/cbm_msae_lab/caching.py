@@ -2,12 +2,12 @@
 expensive) encoder forward pass is run once, not once per training run.
 
 The frozen encoder's output never changes for a fixed encoder+dataset+split
-configuration, regardless of what projection/SAE/loss is trained on top of
+configuration, regardless of what SAE/loss is trained on top of
 it -- so `compute_raw_cache_key` deliberately depends on none of those,
 letting one cache be reused across every experiment that shares the same
 encoder. See `activation_loader.py`'s `mode="cache_encoder"`, which reads
-this cache and still runs the trainable `EncoderProjection` live, with
-gradients, every step.
+this cache: it holds exactly the tensor the SAE consumes, since nothing
+trainable sits between the encoder and the SAE.
 """
 
 from __future__ import annotations
@@ -26,15 +26,18 @@ from torch.utils.data import Dataset
 
 def compute_raw_cache_key(
     encoder_cfg: DictConfig,
-    dataset_name: str,
+    dataset_cfg: DictConfig,
     split: str,
-    image_size: int,
 ) -> str:
+    """The *whole* dataset config goes into the key, not just its class path and
+    image size: `val_fraction`/`seed` redraw which images land in train vs. val,
+    and a key that ignored them would silently serve a cache whose row order no
+    longer matches the split being trained on.
+    """
     payload: dict[str, Any] = {
         "encoder": OmegaConf.to_container(encoder_cfg, resolve=True),
-        "dataset": dataset_name,
+        "dataset": OmegaConf.to_container(dataset_cfg, resolve=True),
         "split": split,
-        "image_size": image_size,
     }
     blob = json.dumps(payload, sort_keys=True).encode("utf-8")
     return "raw_" + hashlib.sha256(blob).hexdigest()[:16]
@@ -84,9 +87,9 @@ class MemmapActivationWriter:
 
 class CachedActivationDataset(Dataset):
     """Reads back what `MemmapActivationWriter` wrote. Each item is one image's
-    raw encoder-output [C, H, W] tensor -- the training loop still has to run
-    the projection (and `flatten_spatial` a whole batch) itself, exactly as
-    `activation_loader.py`'s `mode="cache_encoder"` transform does."""
+    raw encoder-output [C, H, W] tensor -- the training loop only has to
+    `flatten_spatial` a whole batch of them, exactly as `activation_loader.py`'s
+    `mode="cache_encoder"` transform does."""
 
     def __init__(self, cache_dir: str, cache_key: str) -> None:
         self.dir = Path(cache_dir) / cache_key

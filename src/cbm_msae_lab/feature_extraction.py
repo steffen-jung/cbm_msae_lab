@@ -28,10 +28,10 @@ def build_raw_activation_cache(
     device: str,
     resolved_config: dict[str, Any],
 ) -> None:
-    """No `EncoderProjection` involved, so this cache is reusable regardless of
-    projection kernel size/weights (see `caching.py::compute_raw_cache_key`).
+    """Nothing trainable is involved, so this cache is reusable regardless of
+    SAE/loss configuration (see `caching.py::compute_raw_cache_key`).
     Pairs with `activation_loader.py`'s `mode="cache_encoder"`, which runs the
-    (trainable) projection live, with gradients, on top of what's cached here.
+    SAE directly on what's cached here.
     """
     encoder.eval()
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)

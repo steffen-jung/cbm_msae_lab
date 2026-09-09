@@ -59,26 +59,6 @@ class DINOv3EncoderConfig:
 
 
 # --------------------------------------------------------------------------
-# Projection config (the trainable, kernel-size-configurable head)
-# --------------------------------------------------------------------------
-
-
-@dataclass
-class ProjectionConfig:
-    """Maps frozen backbone features [B, C_backbone, H, W] -> [B, C_sae, H, W].
-
-    ``kernel_size=1`` is mathematically identical to a per-token ``nn.Linear``
-    (documented in ``projection.py``); ``kernel_size=3`` additionally mixes in
-    each token's 3x3 spatial neighbourhood before the SAE ever sees it.
-    """
-
-    _target_: str = "cbm_msae_lab.projection.EncoderProjection"
-    in_channels: int = "${encoder.output_dim}"  # type: ignore[assignment]  # OmegaConf interpolation
-    out_channels: int = 512
-    kernel_size: int = 3
-
-
-# --------------------------------------------------------------------------
 # Upsampler configs
 # --------------------------------------------------------------------------
 
@@ -120,7 +100,9 @@ class AnyUpUpsamplerConfig:
 class SAEConfig:
     """Hyperparameters for ``ConfigurableActivationSAE`` + ``ComposableLossTrainer``."""
 
-    activation_dim: int = "${projection.out_channels}"  # type: ignore[assignment]
+    # The SAE reconstructs the frozen encoder's patch feature itself -- there is
+    # no trainable module in between, so this is always the encoder's width.
+    activation_dim: int = "${encoder.output_dim}"  # type: ignore[assignment]
     dict_size: int = 8192
     k: int = 12
     group_fractions: list[float] = field(default_factory=lambda: [0.008, 0.03, 0.06, 0.12, 0.24, 0.542])
@@ -172,18 +154,21 @@ class ScaleSpatialLossConfig:
 
 @dataclass
 class AttentionGroupingConfig:
-    """Hyperparameters for the S2AE-style attention+spatial-proximity patch
-    clustering (see `attention_grouping.py`), shared by `group_sparsity` and
-    `exclusivity` whenever either uses `grouping="attention"` -- kept as one
-    shared config (rather than duplicated per-loss) so the two losses can't
-    silently disagree about which clustering they're grouping by.
+    """Hyperparameters for the S2AE-style per-image patch clustering (see
+    `attention_grouping.py`), shared by `group_sparsity` and `exclusivity`
+    whenever either uses `grouping="attention"` or `grouping="feature"` --
+    kept as one shared config (rather than duplicated per-loss) so the two
+    losses can't silently disagree about which clustering they're grouping
+    by. `n_clusters`/`spatial_coeff` apply identically to both clustering
+    methods; only the per-patch similarity they cluster on differs
+    (attention vs. raw encoder features).
 
     Defaults (`n_clusters=20`, `spatial_coeff=0.02`) match the values found in
     S2AE's own public repo (github.com/liaoweiduo/s2ae) and README.
     """
 
     n_clusters: int = 20
-    spatial_coeff: float = 0.02  # alpha in `distance = d_attention * (d_spatial ** alpha)`
+    spatial_coeff: float = 0.02  # alpha in `distance = d_similarity * (d_spatial ** alpha)`
 
 
 @dataclass
@@ -194,13 +179,18 @@ class GroupSparsityLossConfig:
     identical for every image -- simple and requires no caching.
     `grouping="attention"` instead uses S2AE's own approach: patches are
     clustered per-image by combining the encoder's self-attention with
-    spatial proximity (`attention_grouping.py`). This requires the chosen
-    encoder to have been run with `extract_attention=True` and a group-label
-    cache built via `scripts/extract_attention_groups.py` beforehand.
+    spatial proximity (`attention_grouping.py::cluster_patches`). This
+    requires the chosen encoder to have been run with `extract_attention=True`
+    and a group-label cache built via
+    `scripts/extract_attention_groups.py --method attention` beforehand.
+    `grouping="feature"` clusters by the encoder's raw per-patch feature
+    similarity instead (`attention_grouping.py::cluster_patches_by_features`)
+    -- same cache mechanism, built with `--method feature`. Useful when
+    attention-based clusters aren't granular enough on the object itself.
     """
 
     weight: float = 0.0
-    grouping: str = "tile"  # "tile" | "attention"
+    grouping: str = "tile"  # "tile" | "attention" | "feature"
     tile_size: int = 2
 
 
@@ -212,7 +202,7 @@ class ExclusivityLossConfig:
     """
 
     weight: float = 0.0
-    grouping: str = "tile"  # "tile" | "attention"
+    grouping: str = "tile"  # "tile" | "attention" | "feature"
     tile_size: int = 2
 
 
@@ -247,11 +237,10 @@ class CUBDatasetConfig:
 
 @dataclass
 class CacheConfig:
-    """See caching.py. `mode="live"` never touches disk (encoder + projection
+    """See caching.py. `mode="live"` never touches disk (encoder
     both run live every step). `"cache_encoder"` caches only the frozen
     encoder's raw output (scripts/extract_raw_features.py, built once, fails
-    loudly if missing) and still runs the trainable projection live, with
-    gradients, every step -- the projection trains normally, just without
+    loudly if missing) -- training then reads exactly what the SAE consumes without
     paying for the encoder forward pass every epoch."""
 
     mode: str = "live"  # "live" | "cache_encoder"
@@ -264,27 +253,34 @@ class EvalConfig:
     stimuli, so they run on their own cadence instead of every epoch."""
 
     every_n_epochs: int = 5
-    enable_expensive_metrics: bool = False
+    enable_expensive_metrics: bool = True
     max_eval_samples: int = 2_000
 
 
 @dataclass
 class EarlyStoppingConfig:
-    """Stops training once `val/mse` stops improving, checked every
-    `eval.every_n_epochs` epochs (the only cadence `val/mse` is actually
-    computed on) -- `patience` therefore counts *eval checks*, not epochs:
-    the default `patience=6` at the default `eval.every_n_epochs=5` tolerates
-    30 epochs without improvement before stopping, which is generous enough
-    to ride out the noise from `eval.max_eval_samples`-subsampled MSE
+    """Stops training once `monitor` stops improving, checked every
+    `eval.every_n_epochs` epochs (the only cadence the eval metrics are
+    actually computed on) -- `patience` therefore counts *eval checks*, not
+    epochs: the default `patience=6` at the default `eval.every_n_epochs=5`
+    tolerates 30 epochs without improvement before stopping, which is generous
+    enough to ride out the noise from `eval.max_eval_samples`-subsampled
     estimates without being so patient it never actually saves compute.
+
+    `monitor` is any lower-is-better key `run_eval()` returns, and it also
+    selects `best.pt`. It defaults to `val/fvu` rather than `val/mse` because
+    FVU is scale-invariant: it asks how much of the feature's variance the SAE
+    fails to explain, independent of how large that feature is.
+
     `min_delta` is a *relative* improvement threshold (a new best must be at
-    least this fraction below the previous best) since `val/mse`'s absolute
-    scale depends on the encoder's raw feature magnitude, not a fixed range.
-    `train.epochs` remains a hard cap in case `val/mse` never plateaus (or
-    `enabled=False` disables early stopping and always trains the full cap).
+    least this fraction below the previous best), since the monitored metric's
+    absolute scale is not a fixed range. `train.epochs` remains a hard cap in
+    case it never plateaus (or `enabled=False` disables early stopping and
+    always trains the full cap).
     """
 
     enabled: bool = True
+    monitor: str = "val/fvu"
     patience: int = 6
     min_delta: float = 1e-3
 
@@ -334,7 +330,6 @@ class Config:
     """
 
     encoder: Any = MISSING
-    projection: Any = MISSING
     upsampler: Any = MISSING
     sae: Any = MISSING
     loss: Any = MISSING
@@ -365,8 +360,6 @@ def register_configs() -> None:
     cs.store(group="encoder", name="base_clip_dinoiser", node=ClipDinoiserEncoderConfig)
     cs.store(group="encoder", name="base_dinov3", node=DINOv3EncoderConfig)
 
-    cs.store(group="projection", name="base_k1", node=ProjectionConfig(kernel_size=1))
-    cs.store(group="projection", name="base_k3", node=ProjectionConfig(kernel_size=3))
 
     cs.store(group="upsampler", name="base_none", node=IdentityUpsamplerConfig)
     cs.store(group="upsampler", name="base_bilinear", node=BilinearUpsamplerConfig)

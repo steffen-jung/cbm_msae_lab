@@ -1,8 +1,8 @@
 """Shape smoke tests for the pipeline wiring.
 
 The fast tests below use `DummyEncoder` (fixed random features, no downloads)
-to check `EncoderProjection` + `Upsampler` + SAE composition across every
-combination the plan called for. The real encoders (CLIP-DINOiser, DINOv3,
+to check `Upsampler` + SAE composition across every combination the plan
+called for. The real encoders (CLIP-DINOiser, DINOv3,
 AnyUp) need a checkpoint file / network access, so they get their own,
 separately-skippable integration tests at the bottom of this file.
 """
@@ -16,7 +16,6 @@ import torch
 
 from cbm_msae_lab.encoders.base import Encoder, EncoderOutput
 from cbm_msae_lab.pipeline import ConceptPipeline
-from cbm_msae_lab.projection import EncoderProjection
 from cbm_msae_lab.sae.model import ConfigurableActivationSAE
 from cbm_msae_lab.upsampling.bilinear import BilinearUpsampler
 from cbm_msae_lab.upsampling.identity import IdentityUpsampler
@@ -25,25 +24,32 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 class DummyEncoder(Encoder):
-    """A frozen "encoder" that ignores its input and returns fixed-shape random
-    features -- stands in for CLIP-DINOiser/DINOv3 so these tests need no
-    downloads and run in milliseconds."""
+    """A frozen "encoder" that maps an image to fixed-shape features via a
+    random-but-fixed linear map of its spatially pooled pixels -- stands in for
+    CLIP-DINOiser/DINOv3 so these tests need no downloads and run in
+    milliseconds. Deterministic on purpose: several tests compare a cached
+    feature against a freshly computed one, which a `torch.randn`-per-call
+    stand-in could never satisfy.
+    """
 
     def __init__(self, output_dim: int = 32, grid_size: int = 14, extract_attention: bool = False) -> None:
         super().__init__()
         self.output_dim = output_dim
         self.grid_size = grid_size
         self.extract_attention = extract_attention
+        generator = torch.Generator().manual_seed(0)
+        self.register_buffer("mix", torch.randn(output_dim, 3, generator=generator))  # [C_out, 3]
         self.freeze()
 
     def forward(self, images: torch.Tensor) -> EncoderOutput:
-        B = images.shape[0]
-        features = torch.randn(B, self.output_dim, self.grid_size, self.grid_size)
+        pooled = torch.nn.functional.adaptive_avg_pool2d(images, self.grid_size)  # [B, 3, g, g]
+        features = torch.einsum("bchw,oc->bohw", pooled, self.mix)  # [B, C_out, g, g]
         attention = None
         if self.extract_attention:
             p = self.grid_size * self.grid_size
-            raw = torch.rand(B, p, p)
-            attention = raw / raw.sum(dim=-1, keepdim=True)  # fake but valid row-stochastic attention
+            flat = features.flatten(2).transpose(1, 2)  # [B, P, C_out]
+            attention = torch.softmax(flat @ flat.transpose(1, 2), dim=-1)  # [B, P, P], row-stochastic
+            assert attention.shape[-1] == p
         return EncoderOutput(features=features, attention=attention)
 
 
@@ -54,14 +60,12 @@ def build_sae(
     return ConfigurableActivationSAE(activation_dim, dict_size, k, group_sizes, activation=activation)
 
 
-@pytest.mark.parametrize("kernel_size", [1, 3])
 @pytest.mark.parametrize("activation", ["relu", "sigmoid"])
-def test_no_upsampling(kernel_size: int, activation: str) -> None:
-    encoder = DummyEncoder(output_dim=32, grid_size=14)
-    projection = EncoderProjection(in_channels=32, out_channels=16, kernel_size=kernel_size)
+def test_no_upsampling(activation: str) -> None:
+    encoder = DummyEncoder(output_dim=16, grid_size=14)
     upsampler = IdentityUpsampler()
     sae = build_sae(activation_dim=16, activation=activation)
-    pipeline = ConceptPipeline(encoder, projection, upsampler, sae)
+    pipeline = ConceptPipeline(encoder, upsampler, sae)
 
     images = torch.rand(2, 3, 224, 224)
 
@@ -75,12 +79,22 @@ def test_no_upsampling(kernel_size: int, activation: str) -> None:
     assert out.upsampled_latents is None
 
 
+def test_sae_input_is_the_encoder_feature_itself() -> None:
+    """Nothing trainable sits between encoder and SAE, so what the SAE
+    reconstructs is exactly the frozen encoder's own output -- the property
+    that makes the reconstruction target fixed rather than optimizable."""
+    encoder = DummyEncoder(output_dim=16, grid_size=7)
+    pipeline = ConceptPipeline(encoder, IdentityUpsampler(), build_sae(activation_dim=16))
+
+    images = torch.rand(2, 3, 112, 112)
+    assert torch.equal(pipeline.project(images), encoder(images).features)
+
+
 def test_feature_stage_upsampling_changes_sae_resolution() -> None:
-    encoder = DummyEncoder(output_dim=32, grid_size=14)
-    projection = EncoderProjection(in_channels=32, out_channels=16, kernel_size=3)
+    encoder = DummyEncoder(output_dim=16, grid_size=14)
     upsampler = BilinearUpsampler(target_resolution=28, stage="features")
     sae = build_sae(activation_dim=16)
-    pipeline = ConceptPipeline(encoder, projection, upsampler, sae)
+    pipeline = ConceptPipeline(encoder, upsampler, sae)
 
     images = torch.rand(2, 3, 224, 224)
     out = pipeline(images)
@@ -93,11 +107,10 @@ def test_feature_stage_upsampling_changes_sae_resolution() -> None:
 
 
 def test_latent_stage_upsampling_only_affects_latents() -> None:
-    encoder = DummyEncoder(output_dim=32, grid_size=14)
-    projection = EncoderProjection(in_channels=32, out_channels=16, kernel_size=1)
+    encoder = DummyEncoder(output_dim=16, grid_size=14)
     upsampler = BilinearUpsampler(target_resolution=28, stage="latents")
     sae = build_sae(activation_dim=16)
-    pipeline = ConceptPipeline(encoder, projection, upsampler, sae)
+    pipeline = ConceptPipeline(encoder, upsampler, sae)
 
     images = torch.rand(2, 3, 224, 224)
     out = pipeline(images)
@@ -110,25 +123,9 @@ def test_latent_stage_upsampling_only_affects_latents() -> None:
     assert out.upsampled_latents.shape == (2, 64, 28, 28)
 
 
-def test_kernel_size_one_matches_a_per_token_linear() -> None:
-    """Documents/verifies the claim in projection.py's docstring."""
-    torch.manual_seed(0)
-    projection = EncoderProjection(in_channels=8, out_channels=4, kernel_size=1)
-    features = torch.randn(2, 8, 5, 5)
-
-    conv_out = projection(features)  # [2, 4, 5, 5]
-
-    weight = projection.conv.weight.reshape(4, 8)  # [out, in] (1x1 kernel squeezed)
-    bias = projection.conv.bias
-    linear_out = torch.einsum("bchw,oc->bohw", features, weight) + bias.view(1, 4, 1, 1)
-
-    assert torch.allclose(conv_out, linear_out, atol=1e-5)
-
-
 class TrainableDummyEncoder(DummyEncoder):
     """Same as DummyEncoder, but returns features that depend differentiably on
-    the input, so a gradient check can confirm `EncoderProjection`'s weights
-    actually receive gradients while the encoder's own params stay untouched."""
+    the input, so a gradient check can confirm the encoder stays frozen."""
 
     def forward(self, images: torch.Tensor) -> EncoderOutput:
         pooled = images.mean(dim=(2, 3), keepdim=True)  # [B, 3, 1, 1]
@@ -137,19 +134,14 @@ class TrainableDummyEncoder(DummyEncoder):
         return EncoderOutput(features=features)
 
 
-def test_gradients_flow_into_projection_but_not_encoder() -> None:
-    encoder = TrainableDummyEncoder(output_dim=9, grid_size=4)
-    projection = EncoderProjection(in_channels=9, out_channels=6, kernel_size=3)
-    upsampler = IdentityUpsampler()
+def test_no_gradients_flow_into_the_encoder() -> None:
+    encoder = TrainableDummyEncoder(output_dim=6, grid_size=4)
     sae = build_sae(activation_dim=6, dict_size=16, k=2)
-    pipeline = ConceptPipeline(encoder, projection, upsampler, sae)
+    pipeline = ConceptPipeline(encoder, IdentityUpsampler(), sae)
 
     images = torch.rand(2, 3, 32, 32, requires_grad=True)
-    x_img = pipeline.extract_features(images)
-    x_img.sum().backward()
+    pipeline.extract_features(images).sum().backward()
 
-    assert projection.conv.weight.grad is not None
-    assert torch.any(projection.conv.weight.grad != 0)
     for param in encoder.parameters():
         assert not param.requires_grad
         assert param.grad is None

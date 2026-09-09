@@ -1,15 +1,15 @@
-"""Wires encoder -> projection -> optional feature-stage upsampler -> SAE.
+"""Wires encoder -> optional feature-stage upsampler -> SAE.
 
 Two entry points, matching how this module is used in two different places:
 
-``extract_features(images)`` runs only the encoder/projection/upsampler part,
-producing the ``[B, P, activation_dim]`` tensor ``scripts/train.py`` feeds to
+``extract_features(images)`` runs only the encoder/upsampler part, producing
+the ``[B, P, activation_dim]`` tensor ``scripts/train.py`` feeds to
 ``ComposableLossTrainer.loss`` (in ``train.cache.mode="live"``; the
-``"cache_encoder"`` mode instead skips straight to just ``projection``, since
-``activation_loader.py`` already has the encoder's output from
-``scripts/extract_raw_features.py``'s cache). It is the only part of the
-pipeline that ever needs a gradient (through ``projection``'s Conv2d
-weights) -- everything else here is frozen.
+``"cache_encoder"`` mode skips it entirely, since ``activation_loader.py``
+already has the encoder's output from ``scripts/extract_raw_features.py``'s
+cache). Nothing in this part is trainable: the SAE sees the frozen encoder's
+patch features directly, exactly as CFM does, so its reconstruction target is
+fixed rather than something that can be optimized alongside it.
 
 ``forward(images)`` runs the full pipeline including the SAE, for inference /
 analysis (e.g. producing concept activation maps to look at, or the optional
@@ -25,7 +25,6 @@ from dataclasses import dataclass
 from torch import Tensor, nn
 
 from cbm_msae_lab.encoders.base import Encoder
-from cbm_msae_lab.projection import EncoderProjection
 from cbm_msae_lab.sae.model import ConfigurableActivationSAE
 from cbm_msae_lab.upsampling.base import Upsampler
 
@@ -40,7 +39,7 @@ def flatten_spatial(features: Tensor) -> Tensor:
 
 @dataclass
 class PipelineOutput:
-    features: Tensor  # [B, C_sae, H, W] -- SAE input, after projection and optional feature-stage upsampling
+    features: Tensor  # [B, C_sae, H, W] -- SAE input, after optional feature-stage upsampling
     latents: Tensor  # [B, dict_size, H, W] -- SAE concept activations, spatially reshaped
     reconstruction: Tensor  # [B, C_sae, H, W] -- SAE.decode(latents), same resolution as `features`
     upsampled_latents: Tensor | None  # [B, dict_size, H_t, W_t] if the upsampler targets "latents", else None
@@ -50,24 +49,21 @@ class ConceptPipeline(nn.Module):
     def __init__(
         self,
         encoder: Encoder,
-        projection: EncoderProjection,
         upsampler: Upsampler,
         sae: ConfigurableActivationSAE,
     ) -> None:
         super().__init__()
         self.encoder = encoder
-        self.projection = projection
         self.upsampler = upsampler
         self.sae = sae
 
     def project(self, images: Tensor) -> Tensor:
         """images: [B, 3, H_img, W_img] -> [B, C_sae, H, W] (H, W = the SAE-input grid).
 
-        Gradients flow only into `self.projection` (encoder is frozen; the
-        upsampler, when present, is either parameter-free or itself frozen).
+        Carries no parameters: the encoder is frozen and the upsampler, when
+        present, is either parameter-free or itself frozen.
         """
-        encoder_out = self.encoder(images)  # features: [B, C_backbone, H0, W0]
-        features = self.projection(encoder_out.features)  # [B, C_sae, H0, W0]
+        features = self.encoder(images).features  # [B, C_sae, H0, W0]
         if self.upsampler.stage == "features":
             features = self.upsampler(images, features)  # [B, C_sae, Ht, Wt]
         return features

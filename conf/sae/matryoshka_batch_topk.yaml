@@ -1,9 +1,12 @@
 # Matches CFM's released checkpoint hyperparameters (k=12, expansion factor 16 ->
 # dict_size = 512*16 = 8192, matryoshka group fractions [0.008, 0.03, 0.06, 0.12, 0.24, 0.542]).
+# dict_size stays fixed across encoders so the concept count is comparable; for
+# DINOv3 (768-d) that is expansion ~10.7 -- override with sae.dict_size=12288 to
+# keep CFM's factor of 16 instead.
 defaults:
   - base_matryoshka_batch_topk
 
-activation_dim: ${projection.out_channels}
+activation_dim: ${encoder.output_dim}
 dict_size: 8192
 k: 12
 group_fractions: [0.008, 0.03, 0.06, 0.12, 0.24, 0.542]

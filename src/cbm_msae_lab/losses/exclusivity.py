@@ -8,7 +8,8 @@ penalizes a single dictionary feature from being active across *many*
 different patch groups -- i.e. it pushes each feature toward specializing in
 one group (spatial region) rather than firing everywhere.
 
-See `GroupSparsityLoss` for what `grouping="tile"` vs `"attention"` selects.
+See `GroupSparsityLoss` for what `grouping="tile"` vs `"attention"` vs
+`"feature"` selects.
 """
 
 from __future__ import annotations
@@ -23,8 +24,8 @@ from cbm_msae_lab.losses.tiling import tile_l2_norm
 class ExclusivityLoss(Loss):
     def __init__(self, weight: float, grouping: str = "tile", tile_size: int = 2, n_clusters: int = 20) -> None:
         super().__init__(weight)
-        if grouping not in ("tile", "attention"):
-            raise ValueError(f"unknown grouping {grouping!r}; expected 'tile' or 'attention'")
+        if grouping not in ("tile", "attention", "feature"):
+            raise ValueError(f"unknown grouping {grouping!r}; expected 'tile', 'attention', or 'feature'")
         self.grouping = grouping
         self.tile_size = tile_size
         self.n_clusters = n_clusters
@@ -36,8 +37,9 @@ class ExclusivityLoss(Loss):
         else:
             if ctx.group_labels is None:
                 raise RuntimeError(
-                    "exclusivity.grouping='attention' but no group_labels were supplied to this training "
-                    "step -- build a cache with scripts/extract_attention_groups.py first."
+                    f"exclusivity.grouping={self.grouping!r} but no group_labels were supplied to this "
+                    f"training step -- build a cache with scripts/extract_attention_groups.py --method "
+                    f"{self.grouping} first."
                 )
             s_g = onehot_l2_aggregate(ctx.f_img, ctx.group_labels, self.n_clusters)  # [B, n_clusters, dict_size]
 

@@ -1,8 +1,9 @@
 """Stops training once a tracked (lower-is-better) metric stops improving by
 more than a relative margin, at whatever cadence the caller calls `step()` --
 `scripts/train.py` calls it once per eval check (`train.eval.every_n_epochs`
-epochs), not every epoch, since that's the only cadence `val/mse` is actually
-computed on.
+epochs), not every epoch, since that's the only cadence the eval metrics are
+actually computed on. Which metric is tracked is the caller's choice
+(`train.early_stopping.monitor`, default `val/fvu`).
 """
 
 from __future__ import annotations

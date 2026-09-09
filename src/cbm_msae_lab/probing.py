@@ -46,6 +46,14 @@ class ProbeConfig:
     `epochs=8000` is CUB-scale: with ~9.5k training images and batch_size=1024,
     that is only ~10 optimizer steps per epoch, so many epochs are needed for
     the sparse (`z`) representation in particular to converge.
+
+    `lr_grid` adds 1e-2 to CFM's own (1e-4, 1e-3). CFM only ever probed features
+    on one fixed scale; here the representations being compared can differ in
+    magnitude by several times, and with `standardize=False` a too-small learning
+    rate simply underfits within `epochs` rather than converging to a worse
+    optimum. Selection is still by held-out validation accuracy, so the wider
+    grid cannot make any representation look better than it is -- it only stops
+    a scale mismatch from being reported as a representation-quality difference.
     """
 
     lr: float = 1e-4
@@ -56,7 +64,7 @@ class ProbeConfig:
     bias: bool = False
     standardize: bool = False
     lambda_grid: tuple[float, ...] = field(default_factory=lambda: (0.0, 0.1, 1.0))
-    lr_grid: tuple[float, ...] = field(default_factory=lambda: (1e-4, 1e-3))
+    lr_grid: tuple[float, ...] = field(default_factory=lambda: (1e-4, 1e-3, 1e-2))
 
 
 @dataclass(frozen=True)

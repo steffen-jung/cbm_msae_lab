@@ -4,7 +4,7 @@ Wraps any batch iterable (here always an `ActivationLoader`) and times two
 disjoint things per batch:
 
 - ``data_wait_s``: wall-clock time spent inside `next()` producing this batch
-  (image loading + any live encoder/projection forward pass, or a cache read).
+  (image loading + any live encoder forward pass, or a cache read).
   If `num_workers > 0` and the loader keeps up, this is close to 0 (the next
   batch was already prefetched while the previous training step ran).
 - ``compute_s``: wall-clock time the *caller* spent between receiving the
