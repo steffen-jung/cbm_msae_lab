@@ -203,7 +203,15 @@ def main() -> None:
             f"(lr={result.selected_lr:g}, lam={result.selected_lambda:g})"
         )
 
-    out_path = Path(args.out) if args.out else Path("outputs/task_accuracy") / f"{checkpoint_path.stem}.json"
+    # checkpoint_path.stem alone collides across runs (train.py always names its
+    # best checkpoint "best.pt"); the parent dir is the run's checkpoint_dir, so
+    # prefixing with it keeps auto-eval results from different runs from
+    # overwriting each other.
+    out_path = (
+        Path(args.out)
+        if args.out
+        else Path("outputs/task_accuracy") / f"{checkpoint_path.parent.name}_{checkpoint_path.stem}.json"
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w") as fh:
         json.dump(

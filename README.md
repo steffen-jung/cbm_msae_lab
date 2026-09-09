@@ -124,7 +124,11 @@ uv run scripts/evaluate_task_accuracy.py --checkpoint outputs/checkpoints/best.p
 Only ever run this on a *finished* checkpoint -- it reads the checkpoint's own
 stored config to rebuild the exact encoder/SAE, so it never needs
 its own Hydra config. Writes a JSON report (top-1/top-5 per representation,
-per seed) to `outputs/task_accuracy/<checkpoint-stem>.json`.
+per seed) to `outputs/task_accuracy/<checkpoint-dir-name>_<checkpoint-stem>.json`
+(e.g. `cub_spatial_best.json`) -- prefixed with the checkpoint's parent dir
+name since every run names its best checkpoint `best.pt`, and a bare
+`<checkpoint-stem>.json` would let different runs overwrite each other's
+report. Override with `--out` for a different path.
 
 ## Reconstruction/concept-quality evaluation (post-hoc, after training)
 
