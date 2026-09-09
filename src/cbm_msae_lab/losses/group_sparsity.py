@@ -9,6 +9,18 @@ latent's activations over the patches belonging to group ``g``. Intuitively,
 this pushes each *group* of patches (not each individual patch) toward using
 few dictionary features in total.
 
+Per the paper's Sec. 4.2, ``s^g`` is binarized through a straight-through
+estimator (`ste.py::ste_binarize`) before the L1 norm: ``L_gs`` operates on
+the binary gate "did group ``g`` use latent ``j`` at all", not on the raw
+continuous magnitude. This matters -- applying the L1 penalty directly to the
+continuous ``s^g`` (as an earlier version of this loss did) is minimized by
+shrinking activation *magnitude* toward zero rather than by actually
+excluding features from a group, which in practice collapsed BatchTopK's
+learned inference threshold toward 0 and produced a growing share of dead
+features (both S2AE-loss training runs showed this). The STE decouples
+"is latent ``j`` active in group ``g``" from "how strongly", exactly the
+"shrinkage bias" the paper cites as its reason for binarizing.
+
 Three ways to form the groups, selected by ``grouping``:
 - ``"tile"`` (default): simple s-by-s spatial tiles of the regular ViT patch
   grid (`tiling.py::tile_l2_norm`), identical for every image.
@@ -29,6 +41,7 @@ from torch import Tensor
 
 from cbm_msae_lab.attention_grouping import onehot_l2_aggregate
 from cbm_msae_lab.losses.base import Loss, LossContext
+from cbm_msae_lab.losses.ste import ste_binarize
 from cbm_msae_lab.losses.tiling import tile_l2_norm
 
 
@@ -54,5 +67,6 @@ class GroupSparsityLoss(Loss):
                 )
             s_g = onehot_l2_aggregate(ctx.f_img, ctx.group_labels, self.n_clusters)  # [B, n_clusters, dict_size]
 
-        l1_per_group = s_g.abs().sum(dim=-1)  # ||s^g||_1 per (image, group) -> [B, G]
+        s_g = ste_binarize(s_g)  # forward: {0, 1} gate; backward: identity gradient into s_g
+        l1_per_group = s_g.sum(dim=-1)  # ||s^g||_1 per (image, group) -> [B, G] -- already >= 0, no .abs() needed
         return l1_per_group.mean()  # mean over both groups and batch
