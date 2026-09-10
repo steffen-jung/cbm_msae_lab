@@ -54,6 +54,7 @@ eval "$(conda shell.bash hook)"
 conda activate "${ENV}"
 
 cd "${REPO}"
+export PYTHONPATH="${REPO}/src${PYTHONPATH:+:${PYTHONPATH}}"
 
 python3 -c "import multiprocessing as mp; print('cpu_count', mp.cpu_count())"
 python3 -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'n/a')"
