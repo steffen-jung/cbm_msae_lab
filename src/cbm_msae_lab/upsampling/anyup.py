@@ -33,7 +33,14 @@ class AnyUpUpsampler(Upsampler):
         super().__init__()
         self.target_resolution = target_resolution
         self.stage = stage
-        self.model = torch.hub.load(torch_hub_repo, torch_hub_model, use_natten=use_natten)
+        # trust_repo=True: torch.hub otherwise prompts interactively and fails under
+        # sbatch / no-TTY (EOFError). The repo is the official AnyUp release cited above.
+        self.model = torch.hub.load(
+            torch_hub_repo,
+            torch_hub_model,
+            trust_repo=True,
+            use_natten=use_natten,
+        )
         for param in self.model.parameters():
             param.requires_grad = False
         self.model.eval()
