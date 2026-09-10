@@ -38,9 +38,18 @@ from cbm_msae_lab.config_schema import register_configs
 from cbm_msae_lab.early_stopping import EarlyStopping
 from cbm_msae_lab.encoders.base import Encoder
 from cbm_msae_lab.external_encoder import build_external_encoder, external_embed
+from cbm_msae_lab.grouping import (
+    CLUSTERED_GROUPINGS,
+    clustering_method,
+    needs_attention_grouping,
+    resolve_group_labels,
+    resolve_region_grouping,
+)
 from cbm_msae_lab.metrics.fvu import FVUMetric
 from cbm_msae_lab.metrics.monosemanticity import MonosemanticityScore, PachMonosemanticityScore
 from cbm_msae_lab.metrics.reconstruction import ReconstructionMetric
+from cbm_msae_lab.metrics.region_consistency import RegionConsistencyMetric
+from cbm_msae_lab.metrics.sparsity import ActivationFrequencyMetric, L0Metric
 from cbm_msae_lab.metrics.tversky_ms import TverskyMS
 from cbm_msae_lab.pipeline import ConceptPipeline
 from cbm_msae_lab.sae.trainer import ComposableLossTrainer
@@ -85,32 +94,12 @@ def build_datasets(cfg: DictConfig) -> tuple[Dataset, Dataset]:
     return train_dataset, val_dataset
 
 
-CLUSTERED_GROUPINGS = ("attention", "feature")
 
 
-def needs_attention_grouping(cfg: DictConfig) -> bool:
-    return cfg.loss.group_sparsity.grouping in CLUSTERED_GROUPINGS or cfg.loss.exclusivity.grouping in CLUSTERED_GROUPINGS
-
-
-def clustering_method(cfg: DictConfig) -> str:
-    """`group_sparsity`/`exclusivity` share one `trainer.group_labels` tensor, so
-    if both use clustered grouping they must agree on the method -- this picks
-    whichever one is set (falling back to the other) and raises if they disagree."""
-    gs, ex = cfg.loss.group_sparsity.grouping, cfg.loss.exclusivity.grouping
-    methods = {g for g in (gs, ex) if g in CLUSTERED_GROUPINGS}
-    if len(methods) > 1:
-        raise ValueError(
-            f"group_sparsity.grouping={gs!r} and exclusivity.grouping={ex!r} disagree on clustering "
-            "method -- both read the same cached group_labels, so they must match."
-        )
-    return next(iter(methods))
-
-
-def load_group_label_dataset(cfg: DictConfig, split: str) -> CachedGroupLabelDataset:
+def load_group_label_dataset(cfg: DictConfig, split: str, method: str) -> CachedGroupLabelDataset:
     """Raises FileNotFoundError (with a message pointing at
     scripts/extract_attention_groups.py) if the cache hasn't been built yet --
     clustered grouping never falls back to computing it live."""
-    method = clustering_method(cfg)
     cache_key = compute_group_cache_key(
         encoder_cfg=cfg.encoder,
         n_clusters=cfg.loss.attention_grouping.n_clusters,
@@ -122,6 +111,14 @@ def load_group_label_dataset(cfg: DictConfig, split: str) -> CachedGroupLabelDat
     return CachedGroupLabelDataset(cfg.train.cache.dir, cache_key)
 
 
+def region_group_count(cfg: DictConfig, grid: tuple[int, int]) -> int:
+    """Number of regions the region-consistency metric partitions a patch grid into."""
+    if resolve_region_grouping(cfg) == "tile":
+        s = cfg.train.eval.region_tile_size
+        return (grid[0] // s) * (grid[1] // s)
+    return cfg.loss.attention_grouping.n_clusters
+
+
 @torch.no_grad()
 def run_eval(
     pipeline: ConceptPipeline,
@@ -131,10 +128,14 @@ def run_eval(
     device: str,
     external_encoder: Encoder | None = None,
     val_image_dataset: Dataset | None = None,
+    val_group_labels: CachedGroupLabelDataset | None = None,
 ) -> dict[str, float]:
     pipeline.eval()
     fvu_metric = FVUMetric(cfg.encoder.output_dim).to(device)
     recon_metric = ReconstructionMetric().to(device)
+    l0_metric = L0Metric().to(device)
+    frequency_metric = ActivationFrequencyMetric(cfg.sae.dict_size).to(device)
+    region_metric = RegionConsistencyMetric(region_group_count(cfg, trainer.grid_shape)).to(device)
 
     expensive = cfg.train.eval.enable_expensive_metrics
     ms_metric = MonosemanticityScore(cfg.sae.dict_size).to(device) if expensive else None
@@ -152,6 +153,21 @@ def run_eval(
         x_hat = trainer.ae.decode(f)  # [B*P, D]
         fvu_metric.update(x_flat, x_hat)
         recon_metric.update(x_flat, x_hat)
+        l0_metric.update(f)
+        frequency_metric.update(f)
+
+        region_grouping = resolve_region_grouping(cfg)
+        labels, _n_groups = resolve_group_labels(
+            region_grouping,
+            grid=trainer.grid_shape,
+            tile_size=cfg.train.eval.region_tile_size,
+            batch_size=B,
+            device=device,
+            group_labels=val_group_labels.get_batch(idx).to(device) if val_group_labels is not None else None,
+            n_clusters=cfg.loss.attention_grouping.n_clusters,
+            consumer="train.eval.region_grouping",
+        )
+        region_metric.update(f.reshape(B, P, -1), labels)
 
         if ms_metric is not None and tms_metric is not None:
             f_img = f.reshape(B, P, -1)
@@ -171,9 +187,14 @@ def run_eval(
     results = {"val/fvu": fvu_metric.compute().item()}
     for name, value in recon_metric.compute().items():
         results[f"val/{name}"] = value.item()
+    results["val/l0"] = l0_metric.compute().item()
+    results.update(frequency_metric.summary(prefix="val/"))
+    for name, value in region_metric.compute().items():
+        results[f"val/{name}"] = value.item()
     if ms_metric is not None and tms_metric is not None:
-        results["val/monosemanticity_score"] = ms_metric.compute().mean().item()
+        results["val/monosemanticity_score"] = ms_metric.compute().nanmean().item()
         results["val/monosemanticity_score_pach"] = pach_ms_metric.compute().nanmean().item()
+        results["val/dead_latent_fraction"] = ms_metric.dead_fraction()
         results["val/tversky_ms"] = tms_metric.compute().item()
 
     pipeline.train()
@@ -220,7 +241,16 @@ def main(cfg: DictConfig) -> None:
     train_loader = TimedLoader(build_activation_loader(cfg, "train", train_dataset, pipeline, device))
     val_loader = build_activation_loader(cfg, "val", val_dataset, pipeline, device)
 
-    train_group_labels = load_group_label_dataset(cfg, "train") if needs_attention_grouping(cfg) else None
+    train_group_labels = (
+        load_group_label_dataset(cfg, "train", clustering_method(cfg)) if needs_attention_grouping(cfg) else None
+    )
+    # The val split needs a group-label cache only for the region-consistency
+    # metric -- Group-TopK is training-only and the structural losses never run
+    # during eval, so nothing else on the val path asks for one.
+    region_grouping = resolve_region_grouping(cfg)
+    val_group_labels = (
+        load_group_label_dataset(cfg, "val", region_grouping) if region_grouping in CLUSTERED_GROUPINGS else None
+    )
     external_encoder = (
         build_external_encoder(cfg.encoder._target_, device) if cfg.train.eval.enable_expensive_metrics else None
     )
@@ -279,7 +309,14 @@ def main(cfg: DictConfig) -> None:
         should_stop = False
         if (epoch + 1) % cfg.train.eval.every_n_epochs == 0 or is_last_epoch:
             eval_logs = run_eval(
-                pipeline, trainer, val_loader, cfg, device, external_encoder=external_encoder, val_image_dataset=val_dataset
+                pipeline,
+                    trainer,
+                    val_loader,
+                    cfg,
+                    device,
+                    external_encoder=external_encoder,
+                    val_image_dataset=val_dataset,
+                    val_group_labels=val_group_labels,
             )
             wandb.log(eval_logs, step=step)
             log.info(f"epoch {epoch}: {eval_logs}")

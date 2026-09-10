@@ -137,6 +137,43 @@ def onehot_l2_aggregate(f_img: Tensor, group_labels: Tensor, n_clusters: int) ->
     return sum_sq.clamp_min(0).sqrt()
 
 
+def onehot_mean_aggregate(f_img: Tensor, group_labels: Tensor, n_clusters: int) -> Tensor:
+    """Per-group *mean* over patches, the arithmetic sibling of `onehot_l2_aggregate`.
+
+    f_img: [B, P, C], group_labels: [B, P] -> [B, n_clusters, C], where entry
+    (b, g, c) is the mean of channel c over the patches of image b assigned to
+    cluster g. This is Group-TopK's ``a_bar^g_j = (1/M_g) sum_{i in g} a_ij``.
+
+    A `scatter_add_` segment sum rather than the one-hot matmul
+    `onehot_l2_aggregate` uses: this one sits in the training step's hot path
+    (Group-TopK runs it every step over the full dictionary), where the one-hot
+    form's `B*P*G*C` cost is prohibitive against `scatter_add_`'s `B*P*C`.
+
+    Empty clusters (no patch assigned) get 0 rather than NaN -- their row is
+    never read back, since the routing back to patches uses the same labels and
+    no patch points at an empty cluster.
+    """
+    B, P, C = f_img.shape
+    index = group_labels.unsqueeze(-1).expand(B, P, C)  # [B, P, C]
+    sums = torch.zeros(B, n_clusters, C, dtype=f_img.dtype, device=f_img.device)
+    sums.scatter_add_(1, index, f_img)  # segment sum over patches, O(B*P*C)
+    counts = torch.zeros(B, n_clusters, dtype=f_img.dtype, device=f_img.device)
+    counts.scatter_add_(1, group_labels, torch.ones_like(group_labels, dtype=f_img.dtype))
+    return sums / counts.unsqueeze(-1).clamp_min(1.0)
+
+
+def scatter_groups_to_patches(group_values: Tensor, group_labels: Tensor, n_clusters: int) -> Tensor:
+    """The inverse routing of `onehot_mean_aggregate`: hand every patch its own
+    group's row. group_values: [B, n_clusters, C], group_labels: [B, P] -> [B, P, C].
+
+    A `gather`, not a one-hot matmul -- same reason as above; `n_clusters` never
+    enters the cost."""
+    B, P = group_labels.shape
+    C = group_values.shape[-1]
+    index = group_labels.unsqueeze(-1).expand(B, P, C)  # [B, P, C]
+    return group_values.gather(1, index)
+
+
 def compute_group_cache_key(
     encoder_cfg: DictConfig,
     n_clusters: int,

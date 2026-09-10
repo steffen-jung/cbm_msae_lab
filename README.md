@@ -184,10 +184,75 @@ uv run scripts/extract_attention_groups.py --method feature
 uv run scripts/train.py loss.group_sparsity.grouping=feature loss.group_sparsity.weight=0.3
 ```
 
-`group_sparsity.grouping` and `exclusivity.grouping` share one cached
-`group_labels` tensor per training step, so if both use clustered grouping
-(not `"tile"`) they must use the *same* method -- `scripts/train.py` raises
-if they disagree.
+Every grouping consumer -- `group_sparsity`, `exclusivity`,
+`participation_ratio` and `group_topk` -- shares one cached `group_labels`
+tensor per training step, so any of them that use clustered grouping (not
+`"tile"`) must use the *same* method; `scripts/train.py` raises if they
+disagree. A consumer that is switched off (`weight: 0.0`, or
+`group_topk.enabled: false`) is ignored by that check and pulls in no cache
+requirement.
+
+Both cache builders (`extract_raw_features.py`, `extract_attention_groups.py`)
+skip an already-complete cache by default, so sbatch jobs that build the same
+cache can be submitted together; `--overwrite` forces a rebuild.
+
+## Structural mechanisms: Group-TopK and the participation-ratio loss
+
+Two additions on top of the existing BatchTopK sparsity, aimed at making
+features *spatially* specialised rather than merely few:
+
+- **Group-TopK** (`sae/group_topk.py`) -- a hard selection rule, not a loss.
+  Within each region and each Matryoshka block, only the `k_l` features with the
+  largest mean pre-activation over that region's patches may be active. It
+  contributes no gradient and therefore no shrinkage pressure. It *intersects*
+  with BatchTopK rather than replacing it: BatchTopK decides which activations
+  survive at all, Group-TopK which features a region may use, and Group-TopK can
+  never revive what BatchTopK dropped. `k_group` is one total budget, split
+  across the Matryoshka levels in proportion to their size.
+  **Applied during training only** -- inference keeps the learned BatchTopK
+  threshold and needs no group labels, so only the `train` split needs a cache.
+  That is a deliberate train/inference asymmetry and belongs in any write-up of
+  results obtained with it.
+- **Participation-ratio loss** (`participation_ratio.py`,
+  `losses/participation_ratio.py`) -- `PR_j = 1 / sum_g m_gj^2`, the effective
+  number of regions feature `j` spreads its activation mass over: 1 for a single
+  region, 2 for two equal ones, and so on. Minimising it concentrates each
+  feature spatially. Unlike `exclusivity`, PR is homogeneous of degree 0
+  (`L(alpha*z) = L(z)`), so by Euler `<grad L, z> = 0`: it has no radial gradient
+  component and cannot systematically shrink activations, which is why it needs
+  no straight-through binarisation. The normalisation is written without an
+  epsilon (inactive features are masked out instead), because an epsilon would
+  break that invariance. Both properties are pinned in
+  `tests/test_participation_ratio.py`.
+
+```bash
+# Group-TopK on a fixed 2x2 tile partition (needs no cache):
+uv run scripts/train.py loss.group_topk.enabled=true loss.group_topk.k_group=48
+
+# PR loss on attention clusters:
+uv run scripts/extract_attention_groups.py --method attention
+uv run scripts/train.py loss.participation_ratio.weight=0.1 \
+    loss.participation_ratio.grouping=attention
+```
+
+The four-arm ablation (baseline / +PR / +Group-TopK / both) lives in
+`scripts/run_structure_ablation.sh` and in `scripts/sbatch/cub_struct_*.sbatch`.
+Each arm reports `val/fvu`, `val/l0`, `val/monosemanticity_score`,
+`val/tversky_ms`, `val/region_pr`, `val/region_dominant_share` and
+`val/activation_frequency_*`. `train.eval.region_grouping` (default `"auto"`)
+measures region consistency on whatever patch clusters the run's own
+structural loss actually trains with (`grouping.resolve_region_grouping`),
+falling back to a fixed 2x2 tile partition only when no structural loss uses
+clustering at all (e.g. the plain baseline arm) -- a fixed tile would
+otherwise measure something the loss was never asked to optimize (see
+`participation_ratio.py`'s and `group_topk.py`'s docstrings for why a
+feature-similarity cluster need not be spatially contiguous, so shrinking it
+doesn't shrink an unrelated tile's footprint). Pass `region_grouping=tile` /
+`attention` / `feature` explicitly to force one fixed partition across every
+arm instead, at the cost of measuring some arms against a partition their own
+loss never optimized. The hypothesis under test is not that the structural
+terms improve FVU, but that at controlled reconstruction quality they improve
+spatial specialisation and monosemanticity.
 
 ## Tests
 

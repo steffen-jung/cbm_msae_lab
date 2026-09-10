@@ -17,6 +17,12 @@ eval:
   every_n_epochs: 5
   enable_expensive_metrics: true  # Monosemanticity/Tversky-MS need a full validation pass
   max_eval_samples: 2000
+  # "auto" measures region consistency on whatever patch clusters the run's own
+  # structural loss trains with -- see EvalConfig / grouping.resolve_region_grouping.
+  # Force "tile"/"attention"/"feature" to compare every ablation arm against one
+  # fixed partition instead.
+  region_grouping: auto  # "auto" | "tile" | "attention" | "feature"
+  region_tile_size: 2
 
 # Stops once the monitored metric stops improving. patience counts eval checks
 # (every eval.every_n_epochs epochs), not epochs -- 6 checks * 5 epochs = 30

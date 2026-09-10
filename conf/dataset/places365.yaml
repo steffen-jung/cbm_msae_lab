@@ -1,0 +1,8 @@
+defaults:
+  - base_places365
+
+_target_: cbm_msae_lab.data.places365.Places365Dataset
+root: /ceph/faroesch/datasets/places365
+image_size: 224
+val_fraction: 0.02
+seed: 0

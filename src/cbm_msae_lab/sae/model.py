@@ -18,6 +18,7 @@ flattening/reshaping around it.
 from __future__ import annotations
 
 from collections.abc import Callable
+from itertools import pairwise
 
 import torch
 from dictionary_learning.trainers.matryoshka_batch_top_k import MatryoshkaBatchTopKSAE
@@ -53,6 +54,19 @@ class ConfigurableActivationSAE(MatryoshkaBatchTopKSAE):
         self.activation: Activation = activation
         self._act: Callable[[Tensor], Tensor] = activation_fn(activation)
         self.register_buffer("activation_id", torch.tensor(ACTIVATION_IDS[activation], dtype=torch.int))
+
+    @property
+    def matryoshka_blocks(self) -> list[tuple[int, int]]:
+        """The currently-active Matryoshka levels as `[start, end)` column ranges
+        into a `[*, dict_size]` latent tensor.
+
+        `encode` zeroes everything past `group_indices[active_groups]`, so levels
+        beyond that are omitted here rather than handed out as always-dead blocks.
+        Structural terms (Group-TopK, the participation-ratio loss) are defined
+        per level and iterate over exactly this list.
+        """
+        bounds = [int(i) for i in self.group_indices[: self.active_groups + 1]]
+        return list(pairwise(bounds))
 
     def encode(self, x: Tensor, return_active: bool = False, use_threshold: bool = True):
         """x: [N, activation_dim] -> latents [N, dict_size] (+ optionally active-mask, pre-topk activations)."""

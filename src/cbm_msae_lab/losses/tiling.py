@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from math import ceil
 
+import torch
 from torch import Tensor
 
 
@@ -56,3 +57,18 @@ def prefix_len(dict_size: int, group_size: int, alpha: float, b_min: int) -> int
     """
     b = ceil(dict_size * float(group_size) ** (-alpha))
     return int(min(max(b, b_min), dict_size))
+
+
+def tile_group_labels(grid_h: int, grid_w: int, s: int) -> Tensor:
+    """The same s x s partition `tile_mean`/`tile_l2_norm` pool over, expressed as
+    a per-patch group id instead: [grid_h * grid_w] int64 in [0, (grid_h//s) * (grid_w//s)).
+
+    Lets the tile grouping go through the same label-driven code path as the
+    per-image attention/feature clusterings (see `grouping.py`), so Group-TopK
+    and the participation-ratio loss need only one implementation.
+    """
+    if grid_h % s != 0 or grid_w % s != 0:
+        raise ValueError(f"tile size s={s} does not evenly tile a {grid_h}x{grid_w} grid")
+    gh, gw = grid_h // s, grid_w // s
+    tile_ids = torch.arange(gh * gw, dtype=torch.int64).reshape(gh, 1, gw, 1)
+    return tile_ids.expand(gh, s, gw, s).reshape(grid_h * grid_w)

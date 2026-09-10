@@ -1,0 +1,8 @@
+defaults:
+  - base_stanford_cars
+
+_target_: cbm_msae_lab.data.stanford_cars.StanfordCarsDataset
+root: /ceph/faroesch/datasets/stanford_cars
+image_size: 224
+val_fraction: 0.1
+seed: 0

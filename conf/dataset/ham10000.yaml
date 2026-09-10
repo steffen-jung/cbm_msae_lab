@@ -1,0 +1,9 @@
+defaults:
+  - base_ham10000
+
+_target_: cbm_msae_lab.data.ham10000.HAM10000Dataset
+root: /ceph/faroesch/datasets/ham10000
+image_size: 224
+val_fraction: 0.1
+test_fraction: 0.1
+seed: 0

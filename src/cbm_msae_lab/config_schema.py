@@ -207,12 +207,52 @@ class ExclusivityLossConfig:
 
 
 @dataclass
+class ParticipationRatioLossConfig:
+    """Participation-ratio loss (`losses/participation_ratio.py`): minimise the
+    effective number of regions each feature spreads its activation mass over.
+
+    Unlike `exclusivity`, this is homogeneous of degree 0 and therefore produces
+    no shrinkage gradient, so it needs no straight-through binarisation. See
+    `GroupSparsityLossConfig` for what `grouping` selects between.
+    """
+
+    weight: float = 0.0
+    grouping: str = "tile"  # "tile" | "attention" | "feature"
+    tile_size: int = 2
+    level_weights: list[float] | None = None  # per-Matryoshka-level gamma; None -> uniform 1/L
+
+
+@dataclass
+class GroupTopKConfig:
+    """Group-TopK (`sae/group_topk.py`): a hard regional selection rule, applied
+    during training only.
+
+    Not a loss -- it carries no `weight` because it contributes no gradient, only
+    a mask. It intersects with BatchTopK rather than replacing it. `k_group` is a
+    total budget split across the Matryoshka levels in proportion to their size;
+    `k_per_level` overrides that split explicitly. See `GroupSparsityLossConfig`
+    for what `grouping` selects between.
+    """
+
+    enabled: bool = False
+    grouping: str = "tile"  # "tile" | "attention" | "feature"
+    tile_size: int = 2
+    k_group: int = 48  # 4 * sae.k; features allowed per region, summed over all levels
+    k_per_level: list[int] | None = None
+
+
+@dataclass
 class LossConfig:
     reconstruction: ReconstructionLossConfig = field(default_factory=ReconstructionLossConfig)
     auxk: AuxKLossConfig = field(default_factory=AuxKLossConfig)
     scale_spatial: ScaleSpatialLossConfig = field(default_factory=ScaleSpatialLossConfig)
     group_sparsity: GroupSparsityLossConfig = field(default_factory=GroupSparsityLossConfig)
     exclusivity: ExclusivityLossConfig = field(default_factory=ExclusivityLossConfig)
+    participation_ratio: ParticipationRatioLossConfig = field(default_factory=ParticipationRatioLossConfig)
+    # Not a loss (no weight, no gradient) but configured here so every consumer of
+    # `attention_grouping` and of the shared "all groupings must agree" check lives
+    # in one config subtree -- see `scripts/train.py::clustering_method`.
+    group_topk: GroupTopKConfig = field(default_factory=GroupTopKConfig)
     attention_grouping: AttentionGroupingConfig = field(default_factory=AttentionGroupingConfig)
 
 
@@ -228,6 +268,45 @@ class CUBDatasetConfig:
     image_size: int = 224
     val_fraction: float = 0.1
     seed: int = 0
+
+
+@dataclass
+class StanfordCarsDatasetConfig:
+    _target_: str = "cbm_msae_lab.data.stanford_cars.StanfordCarsDataset"
+    root: str = "/ceph/faroesch/datasets/stanford_cars"
+    image_size: int = 224
+    val_fraction: float = 0.1
+    seed: int = 0
+
+
+@dataclass
+class Places365DatasetConfig:
+    _target_: str = "cbm_msae_lab.data.places365.Places365Dataset"
+    root: str = "/ceph/faroesch/datasets/places365"
+    image_size: int = 224
+    val_fraction: float = 0.02
+    seed: int = 0
+
+
+@dataclass
+class HAM10000DatasetConfig:
+    _target_: str = "cbm_msae_lab.data.ham10000.HAM10000Dataset"
+    root: str = "/ceph/faroesch/datasets/ham10000"
+    image_size: int = 224
+    val_fraction: float = 0.1
+    test_fraction: float = 0.1
+    seed: int = 0
+
+
+@dataclass
+class Fitzpatrick17kDatasetConfig:
+    _target_: str = "cbm_msae_lab.data.fitzpatrick17k.Fitzpatrick17kDataset"
+    root: str = "/ceph/faroesch/datasets/fitzpatrick17k"
+    image_size: int = 224
+    val_fraction: float = 0.1
+    test_fraction: float = 0.1
+    seed: int = 0
+    label_col: str = "label"
 
 
 # --------------------------------------------------------------------------
@@ -255,6 +334,17 @@ class EvalConfig:
     every_n_epochs: int = 5
     enable_expensive_metrics: bool = True
     max_eval_samples: int = 2_000
+    # Region-consistency (`metrics/region_consistency.py`) is measured on
+    # "auto" by default: the same patch clusters a run's own structural loss
+    # (group_topk / participation_ratio / the S2AE losses) actually trains
+    # with, via `grouping.resolve_region_grouping` -- falling back to a fixed
+    # tile partition only when no structural loss uses clustering at all.
+    # Pass "tile"/"attention"/"feature" explicitly to force one fixed
+    # partition across every arm of an ablation instead (needs
+    # scripts/extract_attention_groups.py --split val for "attention"/"feature";
+    # "tile" needs no cache).
+    region_grouping: str = "auto"  # "auto" | "tile" | "attention" | "feature"
+    region_tile_size: int = 2
 
 
 @dataclass
@@ -370,5 +460,9 @@ def register_configs() -> None:
     cs.store(group="loss", name="base_default", node=LossConfig)
 
     cs.store(group="dataset", name="base_cub", node=CUBDatasetConfig)
+    cs.store(group="dataset", name="base_stanford_cars", node=StanfordCarsDatasetConfig)
+    cs.store(group="dataset", name="base_places365", node=Places365DatasetConfig)
+    cs.store(group="dataset", name="base_ham10000", node=HAM10000DatasetConfig)
+    cs.store(group="dataset", name="base_fitzpatrick17k", node=Fitzpatrick17kDatasetConfig)
 
     cs.store(group="train", name="base_default", node=TrainConfig)

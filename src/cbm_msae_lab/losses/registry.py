@@ -7,6 +7,7 @@ from cbm_msae_lab.losses.auxk import AuxKLoss
 from cbm_msae_lab.losses.base import Loss
 from cbm_msae_lab.losses.exclusivity import ExclusivityLoss
 from cbm_msae_lab.losses.group_sparsity import GroupSparsityLoss
+from cbm_msae_lab.losses.participation_ratio import ParticipationRatioLoss
 from cbm_msae_lab.losses.reconstruction import ReconstructionLoss
 from cbm_msae_lab.losses.scale_spatial import ScaleSpatialLoss
 
@@ -35,5 +36,12 @@ def build_losses(cfg: LossConfig) -> dict[str, Loss]:
             grouping=cfg.exclusivity.grouping,
             tile_size=cfg.exclusivity.tile_size,
             n_clusters=cfg.attention_grouping.n_clusters,
+        ),
+        "participation_ratio": ParticipationRatioLoss(
+            weight=cfg.participation_ratio.weight,
+            grouping=cfg.participation_ratio.grouping,
+            tile_size=cfg.participation_ratio.tile_size,
+            n_clusters=cfg.attention_grouping.n_clusters,
+            level_weights=cfg.participation_ratio.level_weights,
         ),
     }

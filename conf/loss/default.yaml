@@ -27,7 +27,23 @@ exclusivity:
   grouping: tile  # "tile" | "attention" | "feature"
   tile_size: 2
 
-# Only used when group_sparsity.grouping or exclusivity.grouping is "attention"
+participation_ratio:
+  weight: 0.0  # PR loss: effective number of regions per feature (shrinkage-free)
+  grouping: tile  # "tile" | "attention" | "feature"
+  tile_size: 2
+  level_weights: null  # null -> uniform 1/L over the Matryoshka levels
+
+# A hard selection rule, not a loss -- hence `enabled` instead of `weight`.
+# Intersects with BatchTopK (never revives what BatchTopK dropped) and applies
+# during training only; inference keeps the learned BatchTopK threshold.
+group_topk:
+  enabled: false
+  grouping: tile  # "tile" | "attention" | "feature"
+  tile_size: 2
+  k_group: 48  # total features allowed per region, split proportionally across levels
+  k_per_level: null  # explicit override of that split
+
+# Only used when a grouping above is "attention"
 # or "feature" -- shared by both clustering methods (see AttentionGroupingConfig).
 # Defaults match S2AE's own repo (github.com/liaoweiduo/s2ae).
 attention_grouping:

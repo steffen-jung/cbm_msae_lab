@@ -1,0 +1,10 @@
+defaults:
+  - base_fitzpatrick17k
+
+_target_: cbm_msae_lab.data.fitzpatrick17k.Fitzpatrick17kDataset
+root: /ceph/faroesch/datasets/fitzpatrick17k
+image_size: 224
+val_fraction: 0.1
+test_fraction: 0.1
+seed: 0
+label_col: label

@@ -27,7 +27,9 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+from pathlib import Path
 
 import hydra
 import torch
@@ -56,6 +58,11 @@ def main() -> None:
         help="cluster by the encoder's self-attention (default) or its raw per-patch feature similarity",
     )
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="rebuild the cache even if a complete one already exists for this key",
+    )
     parser.add_argument("overrides", nargs="*", help="Hydra-style config overrides, e.g. encoder=dinov3")
     args = parser.parse_args()
 
@@ -84,6 +91,19 @@ def main() -> None:
         split=args.split,
         method=args.method,
     )
+    # Idempotent by default, for the same reason as scripts/extract_raw_features.py:
+    # `GroupLabelWriter` opens labels.dat with mode="w+", which truncates it, so a
+    # rebuild while another job reads the same cache would pull the data out from
+    # under it. Several sbatch scripts build this cache and are meant to be
+    # submitted together (see scripts/run_structure_ablation.sh).
+    meta_path = Path(cfg.train.cache.dir) / "group_labels" / cache_key / "meta.json"
+    if meta_path.exists() and not args.overwrite:
+        num_samples = json.loads(meta_path.read_text())["num_samples"]
+        if num_samples == len(dataset):
+            log.info(f"cache {cache_key} already complete ({num_samples} samples) -- skipping (--overwrite to force)")
+            return
+        log.warning(f"cache {cache_key} holds {num_samples} samples but the split has {len(dataset)} -- rebuilding")
+
     log.info(f"Building {args.method}-grouping cache for split={args.split!r} -> cache key {cache_key}")
 
     writer: GroupLabelWriter | None = None

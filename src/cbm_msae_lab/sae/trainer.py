@@ -25,6 +25,7 @@ from cbm_msae_lab.config_schema import LossConfig
 from cbm_msae_lab.losses.base import Loss, LossContext
 from cbm_msae_lab.losses.registry import build_losses
 from cbm_msae_lab.sae.activations import Activation
+from cbm_msae_lab.sae.group_topk import GroupTopK
 from cbm_msae_lab.sae.model import ConfigurableActivationSAE
 
 
@@ -55,6 +56,19 @@ class ComposableLossTrainer(MatryoshkaBatchTopKTrainer):
         self.grid_shape = grid_shape
         self.activation: Activation = activation
         self.losses: dict[str, Loss] = build_losses(loss_config)
+        # A selection rule rather than a loss, so it lives beside `self.losses`
+        # instead of in it: it produces a mask, not a gradient. None when disabled.
+        self.group_topk: GroupTopK | None = (
+            GroupTopK(
+                grouping=loss_config.group_topk.grouping,
+                tile_size=loss_config.group_topk.tile_size,
+                n_clusters=loss_config.attention_grouping.n_clusters,
+                k_group=loss_config.group_topk.k_group,
+                k_per_level=loss_config.group_topk.k_per_level,
+            )
+            if loss_config.group_topk.enabled
+            else None
+        )
         # Set by the training script right before `update()`/`loss()` is called,
         # when a loss needs S2AE-style attention-based patch groups for this
         # batch (see attention_grouping.py) -- an instance attribute rather
@@ -92,6 +106,20 @@ class ComposableLossTrainer(MatryoshkaBatchTopKTrainer):
             x, return_active=True, use_threshold=False
         )  # f, post_act: [N, dict_size]
 
+        if self.group_topk is not None:
+            # Intersect BatchTopK's selection with the regional one. Everything
+            # downstream -- threshold EMA, decode, dead-feature bookkeeping, every
+            # loss term -- is built from the masked `f`, so no loss has to know
+            # Group-TopK exists. `post_act` deliberately stays unmasked: auxk's job
+            # is reviving dead features, and it must be able to reach the ones
+            # Group-TopK is currently suppressing.
+            mask = self.group_topk.mask(post_act.reshape(B, P, -1), self.ae, self.grid_shape, self.group_labels)
+            f = f * mask.reshape(B * P, -1)
+            active_indices_F = f.sum(0) > 0
+
+        # Fed the masked `f` on purpose: the threshold is what inference uses in
+        # place of Group-TopK (which is training-only), so it should track the
+        # activations the decoder was actually trained on.
         if step is not None and step > self.threshold_start_step:
             self.update_threshold(f)
 
@@ -148,6 +176,16 @@ class ComposableLossTrainer(MatryoshkaBatchTopKTrainer):
                 "activation": self.activation,
                 "grid_shape": list(self.grid_shape),
                 "active_losses": {name: loss_obj.weight for name, loss_obj in self.losses.items()},
+                "group_topk": (
+                    {
+                        "grouping": self.group_topk.grouping,
+                        "tile_size": self.group_topk.tile_size,
+                        "k_group": self.group_topk.k_group,
+                        "k_per_level": self.group_topk.k_per_level,
+                    }
+                    if self.group_topk is not None
+                    else None
+                ),
             }
         )
         return cfg
