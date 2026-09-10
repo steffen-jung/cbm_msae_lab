@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH -J cbm_anyup
-#SBATCH -p gpu22
+#SBATCH -p gpu-a100
 #SBATCH -t 23:59:00
 #SBATCH -o /BS/TrackOpt/work/cbm_msae_lab/shell/logs/anyup.%A.%a.%x.log
 #SBATCH -a 0-0
