@@ -58,6 +58,7 @@ python3 scripts/train.py \
     upsampler.stage=features \
     dataset.root="${DATA}" \
     train.cache.mode=live \
+    train.wandb.mode=disabled \
     train.checkpoint_dir=outputs/checkpoints/cub_anyup_64 \
     train.wandb.run_name=cub_anyup_64
 

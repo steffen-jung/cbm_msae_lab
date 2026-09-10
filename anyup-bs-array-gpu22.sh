@@ -68,6 +68,7 @@ python3 scripts/train.py \
     dataset.root="${DATA}" \
     train.cache.mode=live \
     train.batch_size="${BATCH_SIZE}" \
+    train.wandb.mode=disabled \
     train.checkpoint_dir="outputs/checkpoints/${RUN_NAME}" \
     train.wandb.run_name="${RUN_NAME}"
 
