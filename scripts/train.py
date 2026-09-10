@@ -39,7 +39,7 @@ from cbm_msae_lab.early_stopping import EarlyStopping
 from cbm_msae_lab.encoders.base import Encoder
 from cbm_msae_lab.external_encoder import build_external_encoder, external_embed
 from cbm_msae_lab.metrics.fvu import FVUMetric
-from cbm_msae_lab.metrics.monosemanticity import MonosemanticityScore
+from cbm_msae_lab.metrics.monosemanticity import MonosemanticityScore, PachMonosemanticityScore
 from cbm_msae_lab.metrics.reconstruction import ReconstructionMetric
 from cbm_msae_lab.metrics.tversky_ms import TverskyMS
 from cbm_msae_lab.pipeline import ConceptPipeline
@@ -138,6 +138,7 @@ def run_eval(
 
     expensive = cfg.train.eval.enable_expensive_metrics
     ms_metric = MonosemanticityScore(cfg.sae.dict_size).to(device) if expensive else None
+    pach_ms_metric = PachMonosemanticityScore(cfg.sae.dict_size).to(device) if expensive else None
     tms_metric = TverskyMS(cfg.sae.dict_size).to(device) if expensive else None
     if expensive and (external_encoder is None or val_image_dataset is None):
         raise ValueError("enable_expensive_metrics=true needs external_encoder and val_image_dataset for MS")
@@ -160,6 +161,7 @@ def run_eval(
             images = torch.stack([val_image_dataset[i][0] for i in idx.tolist()]).to(device)  # [B, 3, H, W]
             image_embeddings = external_embed(external_encoder, images)  # [B, embed_dim], L2-normalized
             ms_metric.update(concept_activations, image_embeddings)
+            pach_ms_metric.update(concept_activations, image_embeddings)
             tms_metric.update(concept_activations)
 
         seen += B
@@ -171,6 +173,7 @@ def run_eval(
         results[f"val/{name}"] = value.item()
     if ms_metric is not None and tms_metric is not None:
         results["val/monosemanticity_score"] = ms_metric.compute().mean().item()
+        results["val/monosemanticity_score_pach"] = pach_ms_metric.compute().nanmean().item()
         results["val/tversky_ms"] = tms_metric.compute().item()
 
     pipeline.train()

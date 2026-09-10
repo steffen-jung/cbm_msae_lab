@@ -27,7 +27,7 @@ from torch.utils.data import DataLoader
 from cbm_msae_lab.checkpointing import load_for_reproduction
 from cbm_msae_lab.external_encoder import build_external_encoder, external_embed
 from cbm_msae_lab.metrics.fvu import FVUMetric
-from cbm_msae_lab.metrics.monosemanticity import MonosemanticityScore
+from cbm_msae_lab.metrics.monosemanticity import MonosemanticityScore, PachMonosemanticityScore
 from cbm_msae_lab.metrics.reconstruction import ReconstructionMetric
 from cbm_msae_lab.metrics.tversky_ms import TverskyMS
 from cbm_msae_lab.pipeline import ConceptPipeline, flatten_spatial
@@ -59,6 +59,9 @@ def evaluate(
     fvu_metric = FVUMetric(pipeline.encoder.output_dim).to(device)
     recon_metric = ReconstructionMetric().to(device)
     ms_metric = MonosemanticityScore(pipeline.sae.dict_size).to(device) if external_encoder is not None else None
+    pach_ms_metric = (
+        PachMonosemanticityScore(pipeline.sae.dict_size).to(device) if external_encoder is not None else None
+    )
     tms_metric = TverskyMS(pipeline.sae.dict_size).to(device) if external_encoder is not None else None
 
     seen = 0
@@ -77,6 +80,7 @@ def evaluate(
             concept_activations = out.latents.reshape(B, dict_size, H * W).max(dim=-1).values  # [B, dict_size]
             image_embeddings = external_embed(external_encoder, images)  # [B, embed_dim]
             ms_metric.update(concept_activations, image_embeddings)
+            pach_ms_metric.update(concept_activations, image_embeddings)
             tms_metric.update(concept_activations)
 
         seen += B
@@ -88,6 +92,7 @@ def evaluate(
         results[name] = value.item()
     if ms_metric is not None and tms_metric is not None:
         results["monosemanticity_score"] = ms_metric.compute().mean().item()
+        results["monosemanticity_score_pach"] = pach_ms_metric.compute().nanmean().item()
         results["tversky_ms"] = tms_metric.compute().item()
     return results
 
