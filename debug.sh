@@ -24,7 +24,7 @@ export PYTHONUTF8=1
 
 REPO=/BS/TrackOpt/work/cbm_msae_lab
 ENV=/BS/TrackOpt/work/env-cbm-msae
-DATA=/BS/databases01/CUB_200_2011
+DATA=/scratch/inf0/user/sjung/CUB200
 LOG_DIR="${REPO}/shell/logs"
 
 mkdir -p "${LOG_DIR}" "${HF_HOME}" "${TORCH_HOME}"
