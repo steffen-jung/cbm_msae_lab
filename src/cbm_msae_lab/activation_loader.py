@@ -37,6 +37,13 @@ class ActivationLoader:
         return len(self.raw_loader)
 
 
+def resolve_loader_batch_size(cfg: DictConfig, split: str) -> int:
+    """Train uses `train.batch_size`; val/test use the smaller `train.eval.batch_size`."""
+    if split == "train":
+        return int(cfg.train.batch_size)
+    return int(cfg.train.eval.batch_size)
+
+
 def build_activation_loader(
     cfg: DictConfig,
     split: str,
@@ -46,11 +53,12 @@ def build_activation_loader(
 ) -> ActivationLoader:
     mode = cfg.train.cache.mode
     shuffle = split == "train"
+    batch_size = resolve_loader_batch_size(cfg, split)
 
     if mode == "live":
         raw_loader = DataLoader(
             dataset,
-            batch_size=cfg.train.batch_size,
+            batch_size=batch_size,
             shuffle=shuffle,
             num_workers=cfg.train.num_workers,
         )
@@ -85,7 +93,7 @@ def build_activation_loader(
 
     raw_loader = DataLoader(
         cached_dataset,
-        batch_size=cfg.train.batch_size,
+        batch_size=batch_size,
         shuffle=shuffle,
         num_workers=cfg.train.num_workers,
     )

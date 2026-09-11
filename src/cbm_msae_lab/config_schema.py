@@ -332,6 +332,11 @@ class EvalConfig:
     stimuli, so they run on their own cadence instead of every epoch."""
 
     every_n_epochs: int = 5
+    # Kept smaller than `train.batch_size` on purpose: eval materializes a dense
+    # [B*P, dict_size] latent tensor (and temporaries on top), and with
+    # feature-stage upsampling P can be thousands of patches per image. Training
+    # can still use a large batch; eval should not inherit that peak.
+    batch_size: int = 8
     enable_expensive_metrics: bool = True
     max_eval_samples: int = 2_000
     # Region-consistency (`metrics/region_consistency.py`) is measured on

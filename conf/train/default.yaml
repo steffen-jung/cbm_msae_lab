@@ -15,6 +15,7 @@ cache:
 
 eval:
   every_n_epochs: 5
+  batch_size: 8  # smaller than train.batch_size; eval peak scales with B*P*dict_size
   enable_expensive_metrics: true  # Monosemanticity/Tversky-MS need a full validation pass
   max_eval_samples: 2000
   # "auto" measures region consistency on whatever patch clusters the run's own
