@@ -6,6 +6,7 @@ num_workers: 4
 epochs: 200  # hard cap; early_stopping below almost always stops first
 device: cuda
 checkpoint_dir: outputs/checkpoints
+metrics_jsonl: null  # null -> <checkpoint_dir>/metrics.jsonl; always written locally
 checkpoint_every_n_epochs: 5
 log_every_n_steps: 50
 
@@ -15,6 +16,7 @@ cache:
 
 eval:
   every_n_epochs: 5
+  batch_size: 8  # smaller than train.batch_size; eval peak scales with B*P*dict_size
   enable_expensive_metrics: true  # Monosemanticity/Tversky-MS need a full validation pass
   max_eval_samples: 2000
   # "auto" measures region consistency on whatever patch clusters the run's own

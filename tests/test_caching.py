@@ -61,9 +61,23 @@ def _dummy_cfg(cache_dir: str, batch_size: int = 3, num_workers: int = 0) -> Ome
         {
             "encoder": {"_target_": "tests.test_caching.DummyEncoder"},
             "dataset": {"_target_": "tests.test_caching.DummyDataset", "image_size": 16},
-            "train": {"batch_size": batch_size, "num_workers": num_workers, "cache": {"mode": "cache_encoder"}},
+            "train": {
+                "batch_size": batch_size,
+                "num_workers": num_workers,
+                "cache": {"mode": "cache_encoder"},
+                "eval": {"batch_size": batch_size},
+            },
         }
     )
+
+
+def test_resolve_loader_batch_size_uses_eval_for_val() -> None:
+    from cbm_msae_lab.activation_loader import resolve_loader_batch_size
+
+    cfg = OmegaConf.create({"train": {"batch_size": 64, "eval": {"batch_size": 8}}})
+    assert resolve_loader_batch_size(cfg, "train") == 64
+    assert resolve_loader_batch_size(cfg, "val") == 8
+    assert resolve_loader_batch_size(cfg, "test") == 8
 
 
 def test_raw_cache_key_stable_and_split_sensitive() -> None:
@@ -123,6 +137,10 @@ def test_cached_batch_matches_the_live_encoder_features() -> None:
         images = torch.stack([dataset[i][0] for i in idx.tolist()])
         expected = pipeline.extract_features(images)
         assert torch.allclose(x_img, expected, atol=1e-5)
+
+        # Windows cannot delete memmap-backed .dat files while handles are open.
+        loader.raw_loader.dataset.close()
+        del x_img, _labels, idx, loader
 
 
 def test_cache_encoder_rejects_feature_stage_upsampler() -> None:
