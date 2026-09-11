@@ -51,6 +51,7 @@ from cbm_msae_lab.metrics.reconstruction import ReconstructionMetric
 from cbm_msae_lab.metrics.region_consistency import RegionConsistencyMetric
 from cbm_msae_lab.metrics.sparsity import ActivationFrequencyMetric, L0Metric
 from cbm_msae_lab.metrics.tversky_ms import TverskyMS
+from cbm_msae_lab.metrics_logging import JsonlMetricsWriter
 from cbm_msae_lab.pipeline import ConceptPipeline
 from cbm_msae_lab.sae.trainer import ComposableLossTrainer
 from cbm_msae_lab.timing import TimedLoader
@@ -264,6 +265,9 @@ def main(cfg: DictConfig) -> None:
 
     checkpoint_dir = Path(cfg.train.checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    metrics_path = Path(cfg.train.metrics_jsonl) if cfg.train.metrics_jsonl else checkpoint_dir / "metrics.jsonl"
+    metrics_writer = JsonlMetricsWriter(metrics_path)
+    log.info(f"writing metrics to {metrics_path}")
 
     early_stopping = (
         EarlyStopping(patience=cfg.train.early_stopping.patience, min_delta=cfg.train.early_stopping.min_delta)
@@ -302,6 +306,7 @@ def main(cfg: DictConfig) -> None:
                     logs[f"train/{name}"] = value
                 for name, value in trainer.last_per_loss_values.items():
                     logs[f"train/loss_{name}"] = value
+                metrics_writer.log(logs, step=step, epoch=epoch)
                 wandb.log(logs, step=step)
             step += 1
 
@@ -318,6 +323,7 @@ def main(cfg: DictConfig) -> None:
                     val_image_dataset=val_dataset,
                     val_group_labels=val_group_labels,
             )
+            metrics_writer.log(eval_logs, step=step, epoch=epoch)
             wandb.log(eval_logs, step=step)
             log.info(f"epoch {epoch}: {eval_logs}")
 

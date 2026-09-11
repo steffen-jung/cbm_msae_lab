@@ -6,6 +6,7 @@ num_workers: 4
 epochs: 200  # hard cap; early_stopping below almost always stops first
 device: cuda
 checkpoint_dir: outputs/checkpoints
+metrics_jsonl: null  # null -> <checkpoint_dir>/metrics.jsonl; always written locally
 checkpoint_every_n_epochs: 5
 log_every_n_steps: 50
 
