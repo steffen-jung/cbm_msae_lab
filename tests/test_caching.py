@@ -79,6 +79,8 @@ def test_resolve_loader_batch_size_uses_eval_for_val() -> None:
     assert resolve_loader_batch_size(cfg, "val") == 8
     assert resolve_loader_batch_size(cfg, "test") == 8
 
+
+def test_raw_cache_key_stable_and_split_sensitive() -> None:
     encoder_cfg = OmegaConf.create({"_target_": "tests.test_caching.DummyEncoder"})
     dataset_cfg = OmegaConf.create({"_target_": "ds", "image_size": 224, "val_fraction": 0.1, "seed": 0})
     key_a = compute_raw_cache_key(encoder_cfg, dataset_cfg, "train")
@@ -135,6 +137,10 @@ def test_cached_batch_matches_the_live_encoder_features() -> None:
         images = torch.stack([dataset[i][0] for i in idx.tolist()])
         expected = pipeline.extract_features(images)
         assert torch.allclose(x_img, expected, atol=1e-5)
+
+        # Windows cannot delete memmap-backed .dat files while handles are open.
+        loader.raw_loader.dataset.close()
+        del x_img, _labels, idx, loader
 
 
 def test_cache_encoder_rejects_feature_stage_upsampler() -> None:

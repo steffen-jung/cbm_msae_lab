@@ -104,6 +104,17 @@ class CachedActivationDataset(Dataset):
         self.features = np.memmap(self.dir / "features.dat", dtype=np.float32, mode="r", shape=self.shape)
         self.labels = np.memmap(self.dir / "labels.dat", dtype=np.int64, mode="r", shape=(self.shape[0],))
 
+    def close(self) -> None:
+        """Release memmap file handles (needed on Windows before deleting the cache dir)."""
+        for name in ("features", "labels"):
+            arr = getattr(self, name, None)
+            if arr is None:
+                continue
+            mmap = getattr(arr, "_mmap", None)
+            if mmap is not None:
+                mmap.close()
+            setattr(self, name, None)
+
     def __len__(self) -> int:
         return self.shape[0]
 
